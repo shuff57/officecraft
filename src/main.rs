@@ -1,4 +1,5 @@
-//! OfficeCraft: WordCraft, GridCraft, DeckCraft and PdfCraft as tabs in one window.
+//! OfficeCraft: WordCraft, GridCraft, DeckCraft, PdfCraft and viSHual (graphing) as tabs in one
+//! window.
 //!
 //! Each tab is the real app's UI struct, created the first time its tab is opened. Only the
 //! active tab sees input and runs its frame logic, so shortcuts never leak between apps.

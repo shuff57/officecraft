@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
-description = "One tabbed window for WordCraft, GridCraft, DeckCraft and PdfCraft"
+description = "One tabbed window for WordCraft, GridCraft, DeckCraft, PdfCraft and viSHual graphs"
 
 [dependencies]
 wordcraft-doc = { path = "../wordcraft/crates/doc" }

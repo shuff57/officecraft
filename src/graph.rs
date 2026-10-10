@@ -203,8 +203,8 @@ impl GraphApp {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::left("graph_side").resizable(true).default_size(280.0).show_inside(ui, |ui| self.sidebar(ui));
-        egui::CentralPanel::default().show_inside(ui, |ui| self.canvas(ui));
+        egui::Panel::left("graph_side").resizable(true).default_size(280.0).show(ui, |ui| self.sidebar(ui));
+        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui));
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -446,7 +446,9 @@ mod tests {
                 time: Some(i as f64 / 60.0),
                 ..Default::default()
             };
-            let _ = ctx.run_ui(raw, |ui| app.ui(ui));
+            let mut out = ctx.run_ui(raw, |ui| app.ui(ui));
+            // The textures were "uploaded": the context insists the deltas are looked at.
+            out.textures_delta.clear();
         }
         ctx
     }
@@ -455,7 +457,8 @@ mod tests {
     fn the_tab_draws_a_texture_and_follows_expressions() {
         let mut g = GraphApp::new();
         if g.gpu.is_err() {
-            return; // no GPU adapter on this machine: nothing to draw with
+            eprintln!("graph test skipped: no GPU adapter");
+            return; // nothing to draw with on this machine
         }
         frames(&mut g, 3);
         let t = g.texture.as_ref().map(|t| t.size());
