@@ -1158,6 +1158,21 @@ impl eframe::App for Suite {
         if let Some((path, n)) = self.shot.as_mut() {
             *n += 1;
             ctx.request_repaint();
+            // `OFFICECRAFT_SHOT_EQUATION=1`: insert an equation on the front deck and edit it in place.
+            if *n == 8 && std::env::var_os("OFFICECRAFT_SHOT_EQUATION").is_some() {
+                for e in self.entries.iter_mut() {
+                    if let Tab::Deck(a) = &mut e.tab {
+                        // An existing equation, edited where it sits.
+                        let made = a.run("insert.equation", serde_json::json!({"linear": "x=(-b+-sqrt(b^2-4ac))/2a", "rect": [160, 200, 640, 90]}));
+                        if let Some(id) = made.ok().and_then(|v| v.get("id").and_then(serde_json::Value::as_u64)) {
+                            a.session.ui_requests.push(deckcraft_engine::UiRequest::Dialog {
+                                id: "equation".into(),
+                                params: serde_json::json!({"edit": true, "id": id, "paragraph": 0, "run": 0}),
+                            });
+                        }
+                    }
+                }
+            }
             if *n == 20 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }
@@ -1369,8 +1384,16 @@ impl eframe::App for Suite {
         match self.view {
             View::Home => self.home(ui),
             View::Tab(id) => {
+                let owner = self.ctx_owner;
                 if let Some(e) = self.entry_mut(id) {
-                    e.tab.ui(ui, frame);
+                    // A tab clicked in this very frame has not had its fonts and visuals
+                    // installed yet (`logic` does that at the start of the next frame): drawing it
+                    // now would use another app's font families, which panics.
+                    if owner == Some(e.kind) {
+                        e.tab.ui(ui, frame);
+                    } else {
+                        ui.ctx().request_repaint();
+                    }
                 } else {
                     self.view = View::Home;
                 }
