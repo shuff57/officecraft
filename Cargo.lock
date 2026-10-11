@@ -1588,6 +1588,16 @@ name = "deckcraft-matroska"
 version = "0.5.0"
 
 [[package]]
+name = "deckcraft-mcp"
+version = "0.5.0"
+dependencies = [
+ "deckcraft-engine",
+ "deckcraft-render",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "deckcraft-media"
 version = "0.5.0"
 dependencies = [
@@ -2903,6 +2913,15 @@ version = "0.4.0"
 dependencies = [
  "gridcraft-core",
  "regex",
+]
+
+[[package]]
+name = "gridcraft-mcp"
+version = "0.4.0"
+dependencies = [
+ "gridcraft-engine",
+ "log",
+ "serde_json",
 ]
 
 [[package]]
@@ -4564,10 +4583,12 @@ name = "officecraft"
 version = "0.1.0"
 dependencies = [
  "deckcraft-engine",
+ "deckcraft-mcp",
  "deckcraft-ui-egui",
  "eframe",
  "egui",
  "gridcraft-engine",
+ "gridcraft-mcp",
  "gridcraft-ui-egui",
  "log",
  "math_core",
@@ -4578,6 +4599,7 @@ dependencies = [
  "ureq",
  "wordcraft-doc",
  "wordcraft-engine",
+ "wordcraft-mcp",
  "wordcraft-ui-egui",
 ]
 
@@ -8608,6 +8630,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wordcraft-control-key"
+version = "0.5.0"
+
+[[package]]
 name = "wordcraft-doc"
 version = "0.5.0"
 dependencies = [
@@ -8724,6 +8750,18 @@ dependencies = [
  "wordcraft-fonts",
  "wordcraft-geom",
  "wordcraft-proof",
+]
+
+[[package]]
+name = "wordcraft-mcp"
+version = "0.5.0"
+dependencies = [
+ "log",
+ "serde_json",
+ "wordcraft-control-key",
+ "wordcraft-doc",
+ "wordcraft-engine",
+ "wordcraft-render",
 ]
 
 [[package]]

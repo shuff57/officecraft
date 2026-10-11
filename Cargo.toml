@@ -15,6 +15,10 @@ gridcraft-ui-egui = { path = "../gridcraft/crates/ui-egui" }
 deckcraft-engine = { path = "../deckcraft/crates/engine" }
 deckcraft-ui-egui = { path = "../deckcraft/crates/ui-egui" }
 pdfcraft-ui-egui = { path = "../pdfcraft/crates/ui-egui" }
+# The agent tool sets (batch, type_text, add_slide, write_range ...) the assistant offers its model.
+wordcraft-mcp = { path = "../wordcraft/crates/mcp" }
+deckcraft-mcp = { path = "../deckcraft/crates/mcp" }
+gridcraft-mcp = { path = "../gridcraft/crates/mcp" }
 # viSHual: the graphing engine (JSON command API, headless GPU renderer) behind the Graph tab.
 math_playground = { path = "../abstract-math-playground/math_playground" }
 math_core = { path = "../abstract-math-playground/math_core" }

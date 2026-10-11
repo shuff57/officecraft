@@ -630,6 +630,7 @@ struct Suite {
     home_grid: bool,
     /// `OFFICECRAFT_SHOT=<file.ppm>`: draw Home for a few frames, save the window as a PPM, exit.
     shot: Option<(String, u32)>,
+    shot_sent: bool,
     home_styled: bool,
     folder_counts: Vec<usize>,
 }
@@ -648,7 +649,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, home_styled: false, folder_counts: Vec::new() };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new() };
         suite.recount();
         suite
     }
@@ -658,11 +659,22 @@ impl Suite {
     }
 
     /// Starts a fresh, empty instance of `kind` and shows it.
+    /// A tab with a new, blank file in it (what New file makes).
     fn new_tab(&mut self, kind: Kind) -> u64 {
+        let tab = match kind {
+            // A presentation needs a slide to work on: an assistant (or a first click) has nothing
+            // to act on in an empty session.
+            Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deckcraft_engine::Session::with_new(), deck_services()))),
+            _ => Tab::create(kind),
+        };
+        self.push_tab(kind, tab)
+    }
+
+    fn push_tab(&mut self, kind: Kind, tab: Tab) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let n = self.entries.iter().filter(|e| e.kind == kind).count() + 1;
-        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab: Tab::create(kind), chat: ai::Chat::new(), pdf_client: None });
+        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), pdf_client: None });
         self.view = View::Tab(id);
         id
     }
@@ -683,7 +695,8 @@ impl Suite {
             return;
         };
         let prev = self.view;
-        let id = self.new_tab(kind);
+        // An empty app to open the file into (not a blank new file, which would sit beside it).
+        let id = self.push_tab(kind, Tab::create(kind));
         let result = self.entry_mut(id).map(|e| e.tab.open(path)).unwrap_or(Err("tab missing".into()));
         match result {
             Ok(()) => {
@@ -717,11 +730,17 @@ impl Suite {
     fn drive_ai_selftest(&mut self, ctx: &egui::Context, prompt: String, started: Option<std::time::Instant>) {
         ctx.request_repaint();
         let Some(t0) = started else {
-            let id = self.new_tab(Kind::Word);
+            // `OFFICECRAFT_SELFTEST_AI_APP=docs|sheets|slides` picks the app (default docs).
+            let kind = match std::env::var("OFFICECRAFT_SELFTEST_AI_APP").as_deref() {
+                Ok("sheets") => Kind::Grid,
+                Ok("slides") => Kind::Deck,
+                _ => Kind::Word,
+            };
+            let id = self.new_tab(kind);
             let cfg = self.ai_cfg.clone();
             if let Some(e) = self.entry_mut(id) {
                 e.chat.open = true;
-                e.chat.ask_text(prompt.clone(), ai::App::Docs, &cfg, ctx);
+                e.chat.ask_text(prompt.clone(), ai_app(kind), &cfg, ctx);
             }
             eprintln!("ai-selftest: model {} at {}", cfg.model, cfg.base_url);
             self.ai_selftest = Some((prompt, Some(std::time::Instant::now())));
@@ -1179,7 +1198,19 @@ impl eframe::App for Suite {
                     }
                 }
             }
-            if *n == 20 {
+            // `OFFICECRAFT_SHOT_CHAT=<prompt>`: open the assistant on the front tab and ask it;
+            // the picture is taken once it has answered (or after 3 minutes).
+            let chat = std::env::var("OFFICECRAFT_SHOT_CHAT").ok();
+            let waiting = chat.is_some() && *n < 4000 && (*n < 30 || self.entries.last().is_some_and(|e| e.chat.busy()));
+            if *n == 3
+                && let (Some(prompt), Some(e)) = (chat.clone(), self.entries.last_mut())
+            {
+                e.chat.open = true;
+                let (kind, cfg) = (e.kind, self.ai_cfg.clone());
+                e.chat.ask_text(prompt, ai_app(kind), &cfg, ctx);
+            }
+            if *n >= 20 && !waiting && !self.shot_sent {
+                self.shot_sent = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }
             let img = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
@@ -1190,7 +1221,7 @@ impl eframe::App for Suite {
                 let ok = std::fs::write(&*path, out).is_ok();
                 std::process::exit(if ok { 0 } else { 1 });
             }
-            if *n > 400 {
+            if *n > 4400 {
                 eprintln!("shot: no screenshot event arrived");
                 std::process::exit(1);
             }
@@ -1379,12 +1410,19 @@ impl eframe::App for Suite {
             && e.chat.open
         {
             let app = ai_app(e.kind);
-            let mut submit = false;
-            egui::Panel::right("officecraft_ai").default_size(380.0).min_size(280.0).resizable(true).show(ui, |ui| {
-                submit = e.chat.ui(ui, app, &self.ai_cfg);
+            let accent = kind_color(Some(e.kind));
+            let models = ai::models(&self.ai_cfg, ui.ctx());
+            let mut action = None;
+            egui::Panel::right("officecraft_ai").default_size(400.0).min_size(300.0).resizable(true).show(ui, |ui| {
+                action = e.chat.ui(ui, app, &self.ai_cfg, accent, &e.name, &models);
             });
-            if submit {
-                e.chat.send(app, &self.ai_cfg, ui.ctx());
+            match action {
+                Some(ai::Action::Send) => e.chat.send(app, &self.ai_cfg, ui.ctx()),
+                Some(ai::Action::SetModel(m)) => {
+                    ai::save_model(&m);
+                    self.ai_cfg.model = m;
+                }
+                None => {}
             }
         }
         match self.view {
