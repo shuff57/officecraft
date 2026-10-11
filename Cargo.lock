@@ -1678,6 +1678,7 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
+ "equashion-layout",
  "equashion-math",
  "kurbo 0.13.1",
  "unicode-bidi",
@@ -8703,7 +8704,10 @@ dependencies = [
 name = "wordcraft-layout"
 version = "0.5.0"
 dependencies = [
+ "equashion-layout",
+ "equashion-math",
  "js-sys",
+ "kurbo 0.13.1",
  "log",
  "serde",
  "serde_json",
@@ -8711,6 +8715,7 @@ dependencies = [
  "unicode-linebreak",
  "unicode-segmentation",
  "wordcraft-doc",
+ "wordcraft-docx",
  "wordcraft-fonts",
  "wordcraft-geom",
  "wordcraft-proof",

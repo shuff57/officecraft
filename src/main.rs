@@ -1161,9 +1161,15 @@ impl eframe::App for Suite {
             // `OFFICECRAFT_SHOT_EQUATION=1`: insert an equation on the front deck and edit it in place.
             if *n == 8 && std::env::var_os("OFFICECRAFT_SHOT_EQUATION").is_some() {
                 for e in self.entries.iter_mut() {
+                    if let Tab::Word(a) = &mut e.tab {
+                        let _ = a.run("insert.equation", serde_json::json!({"linear": "x=(-b+-sqrt(b^2-4ac))/2a"}));
+                    }
                     if let Tab::Deck(a) = &mut e.tab {
                         // An existing equation, edited where it sits.
                         let made = a.run("insert.equation", serde_json::json!({"linear": "x=(-b+-sqrt(b^2-4ac))/2a", "rect": [160, 200, 640, 90]}));
+                        if std::env::var_os("OFFICECRAFT_SHOT_EQUATION_STATIC").is_some() {
+                            continue;
+                        }
                         if let Some(id) = made.ok().and_then(|v| v.get("id").and_then(serde_json::Value::as_u64)) {
                             a.session.ui_requests.push(deckcraft_engine::UiRequest::Dialog {
                                 id: "equation".into(),
