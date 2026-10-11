@@ -58,8 +58,10 @@ impl GraphApp {
             changed: false,
             pressed: None,
         };
-        // The default document has one empty item; replace it with the starter rows.
-        g.cmd(json!({"t": "removeItem", "id": "e0"}));
+        // A default document may carry one empty item; replace it with the starter rows.
+        if g.app.doc.items.iter().any(|i| i.id == "e0") {
+            g.cmd(json!({"t": "removeItem", "id": "e0"}));
+        }
         for s in STARTER {
             g.add_row(s);
         }
@@ -203,7 +205,7 @@ impl GraphApp {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::left("graph_side").resizable(true).default_size(280.0).show(ui, |ui| self.sidebar(ui));
+        egui::Panel::left("graph_side").resizable(true).default_size(300.0).size_range(220.0..=480.0).show(ui, |ui| self.sidebar(ui));
         egui::CentralPanel::default().show(ui, |ui| self.canvas(ui));
     }
 
@@ -211,7 +213,7 @@ impl GraphApp {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             if ui.button("Open…").clicked() {
-                let picked = rfd::FileDialog::new().add_filter("viSHual graph", &["vshl", "vishual", "json"]).pick_file();
+                let picked = rfd::FileDialog::new().add_filter("viSHual", &["vshl", "vishual", "json"]).pick_file();
                 if let Some(p) = picked {
                     self.status = match self.open_path(&p.to_string_lossy()) {
                         Ok(()) => String::new(),
@@ -225,7 +227,7 @@ impl GraphApp {
                     .as_deref()
                     .and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()).map(str::to_string))
                     .unwrap_or_else(|| "graph.vshl".into());
-                let picked = rfd::FileDialog::new().set_file_name(name).add_filter("viSHual graph", &["vshl"]).save_file();
+                let picked = rfd::FileDialog::new().set_file_name(name).add_filter("viSHual", &["vshl"]).save_file();
                 if let Some(p) = picked {
                     self.status = match self.save_to(&p.to_string_lossy()) {
                         Ok(()) => String::new(),

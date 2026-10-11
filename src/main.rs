@@ -48,7 +48,7 @@ fn word_services() -> wordcraft_ui_egui::Services {
             let d = if purpose == "picture" {
                 d.add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
             } else {
-                d.add_filter("Documents", &["docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "json"])
+                d.add_filter("WordCraft", &["docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "json"])
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
@@ -61,7 +61,7 @@ fn grid_services() -> gridcraft_ui_egui::Services {
     gridcraft_ui_egui::Services {
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Spreadsheets", &["xlsx", "xlsm", "csv", "tsv", "txt", "json"])
+                .add_filter("GridCraft", &["xlsx", "xlsm", "csv", "tsv", "txt", "json"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
         })),
@@ -82,7 +82,7 @@ fn deck_services() -> deckcraft_ui_egui::Services {
     deckcraft_ui_egui::Services {
         pick_open: Some(Box::new(|_purpose: &str| {
             rfd::FileDialog::new()
-                .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
+                .add_filter("DeckCraft", &["deckcraft", "pptx", "potx", "ppsx"])
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
@@ -1097,7 +1097,14 @@ impl Suite {
             self.folder_sel = i;
             self.folder_rows = list_folder(&dir);
         }
-        if pick_files && let Some(p) = rfd::FileDialog::new().add_filter("Office files", OPEN_EXTS).pick_files() {
+        if pick_files && let Some(p) = rfd::FileDialog::new()
+            .add_filter("All Office files", OPEN_EXTS)
+            .add_filter("WordCraft", &["docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm"])
+            .add_filter("GridCraft", &["xlsx", "xlsm", "csv", "tsv"])
+            .add_filter("DeckCraft", &["deckcraft", "pptx", "potx", "ppsx"])
+            .add_filter("PDFCraft", &["pdf"])
+            .add_filter("viSHual", &["vshl", "vishual"])
+            .pick_files() {
             // Several files at once each get their own tab.
             self.pending.extend(p.iter().map(|f| f.to_string_lossy().to_string()));
             ctx.request_repaint();
@@ -1174,9 +1181,24 @@ fn ai_app(kind: Kind) -> ai::App {
 
 impl eframe::App for Suite {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let mut shot_tab = None;
         if let Some((path, n)) = self.shot.as_mut() {
             *n += 1;
             ctx.request_repaint();
+            // `OFFICECRAFT_SHOT_TAB=docs|sheets|slides|pdf|graph`: open a blank tab of that app first.
+            if *n == 2
+                && let Ok(t) = std::env::var("OFFICECRAFT_SHOT_TAB")
+            {
+                let kind = match t.as_str() {
+                    "docs" => Some(Kind::Word),
+                    "sheets" => Some(Kind::Grid),
+                    "slides" => Some(Kind::Deck),
+                    "pdf" => Some(Kind::Pdf),
+                    "graph" => Some(Kind::Graph),
+                    _ => None,
+                };
+                shot_tab = kind;
+            }
             // `OFFICECRAFT_SHOT_EQUATION=1`: insert an equation on the front deck and edit it in place.
             if *n == 8 && std::env::var_os("OFFICECRAFT_SHOT_EQUATION").is_some() {
                 for e in self.entries.iter_mut() {
@@ -1225,6 +1247,9 @@ impl eframe::App for Suite {
                 eprintln!("shot: no screenshot event arrived");
                 std::process::exit(1);
             }
+        }
+        if let Some(k) = shot_tab {
+            self.new_tab(k);
         }
         if let Some(n) = self.selftest {
             const EVERY: u64 = 40;
