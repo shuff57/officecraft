@@ -202,13 +202,13 @@ impl Tab {
 
     /// The apps share one egui context and each installs its own fonts and visuals into it.
     /// After another app has drawn, this one must install them again.
-    fn context_changed(&mut self) {
+    fn context_changed(&mut self, ctx: &egui::Context) {
         match self {
             Tab::Word(a) => a.context_changed(),
             Tab::Grid(a) => a.context_changed(),
             Tab::Deck(a) => a.context_changed(),
             Tab::Pdf(a) => a.context_changed(),
-            Tab::Graph(a) => a.context_changed(),
+            Tab::Graph(a) => a.context_changed(ctx),
         }
     }
 
@@ -1312,7 +1312,7 @@ impl eframe::App for Suite {
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
         {
             if self.ctx_owner != Some(e.kind) {
-                e.tab.context_changed();
+                e.tab.context_changed(ctx);
                 self.ctx_owner = Some(e.kind);
             }
             e.tab.logic(ctx, frame);

@@ -922,7 +922,8 @@ fn system_prompt(app: App) -> String {
         App::Graph => {
             " This is a graphing calculator: items are expressions such as y=x^2, points like (1,2), \
               inequalities and r=... polar curves; a free letter becomes a slider. Commands are the \
-              engine's JSON commands (setExpr, addItem, setSlider, setView, ...). Find them with list_commands."
+              engine's JSON commands (setExpr, addItem, setSlider, setView, ...). Find them with list_commands. \
+              newGraph clears the workspace and sendToGallery files it as a gallery card."
         }
     };
     format!(

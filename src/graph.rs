@@ -16,7 +16,11 @@ pub struct GraphApp {
 
 impl GraphApp {
     pub fn new() -> GraphApp {
-        GraphApp { app: VishualApp::new(), prompts: Vec::new() }
+        let mut app = VishualApp::new();
+        if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))) {
+            app.open_gallery_store(dir.join("officecraft").join("vishual-gallery.json"));
+        }
+        GraphApp { app, prompts: Vec::new() }
     }
 
     /// Screenshot hook: `OFFICECRAFT_SHOT_VISHUAL=chat,dark`.
@@ -25,6 +29,7 @@ impl GraphApp {
             match part.trim() {
                 "chat" => self.app.show_chat(),
                 "dark" => self.app.set_dark(true),
+                "seed" => self.app.seed_demo(),
                 _ => {}
             }
         }
@@ -44,13 +49,22 @@ impl GraphApp {
         self.app.save_to(path)
     }
 
-    pub fn doc_json(&self) -> String {
+    pub fn doc_json(&mut self) -> String {
         self.app.doc_json()
     }
 
     /// Prompts typed into viSHual's own chat box, for the suite's assistant to answer.
     pub fn take_prompts(&mut self) -> Vec<String> {
+        // viSHual's chat makes a new graph per request and files it in the gallery
         std::mem::take(&mut self.prompts)
+            .into_iter()
+            .map(|p| {
+                format!(
+                    "Make a new graph for this request: {p}\n\nRun newGraph, add the items with addItem / setSlider / setMode, check the result, \
+                     then run sendToGallery with a short name so it appears as a card in the gallery."
+                )
+            })
+            .collect()
     }
 
     /// The assistant's view of this tab: `document.inspect`, `engine.commands`, `engine.execute`.
@@ -63,6 +77,18 @@ impl GraphApp {
             "engine.commands" => Ok(command_catalog()),
             "engine.execute" => {
                 let name = params.get("command").and_then(Value::as_str).ok_or("needs a `command` id")?;
+                match name {
+                    "newGraph" => {
+                        self.app.new_graph();
+                        return Ok(json!({"ok": true}));
+                    }
+                    "sendToGallery" => {
+                        let title = params.get("params").and_then(|p| p.get("name")).and_then(Value::as_str).unwrap_or("Untitled graph");
+                        let key = self.app.file_graph(title);
+                        return Ok(json!({"ok": true, "card": key, "graphs_in_gallery": self.app.gallery_len()}));
+                    }
+                    _ => {}
+                }
                 let mut c = params.get("params").cloned().unwrap_or_else(|| json!({}));
                 let Some(obj) = c.as_object_mut() else {
                     return Err("`params` must be an object".into());
@@ -87,8 +113,21 @@ impl GraphApp {
 
     pub fn raw_input_hook(&mut self, _raw: &mut egui::RawInput) {}
 
-    pub fn context_changed(&mut self) {
-        // Nothing of ours lives in the shared egui context except the texture, which is kept.
+    /// Coming back to the tab: the fonts are per context, so put viSHual's display serif in.
+    pub fn context_changed(&mut self, ctx: &egui::Context) {
+        let mut fonts = egui::FontDefinitions::default();
+        let sans = ["/usr/share/fonts/google-noto/NotoSans-Regular.ttf", "/usr/share/fonts/noto/NotoSans-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"]
+            .iter()
+            .find_map(|p| std::fs::read(p).ok());
+        if let Some(bytes) = sans {
+            fonts.font_data.insert("viz_sans".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+            if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                list.insert(0, "viz_sans".into());
+            }
+        }
+        viz_native::install_fonts(&mut fonts);
+        ctx.set_fonts(fonts);
+        ctx.set_visuals(egui::Visuals::light());
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -114,7 +153,9 @@ fn command_catalog() -> Value {
         {"id": "setMode", "label": "1D, 2D or 3D", "params": {"mode": "1d|2d|3d"}, "enabled": true},
         {"id": "setView", "label": "Window and axes", "params": {"window": "{min:[x,y,z], max:[x,y,z]}", "grid": "bool", "axes": "bool", "freeAspect": "bool (keep the typed y range)", "xScale": "linear|log", "yScale": "linear|log"}, "enabled": true},
         {"id": "setAngle", "label": "Radians or degrees", "params": {"angle": "rad|deg"}, "enabled": true},
-        {"id": "reset", "label": "Reset the camera", "params": {}, "enabled": true}
+        {"id": "reset", "label": "Reset the camera", "params": {}, "enabled": true},
+        {"id": "newGraph", "label": "Start a new, empty graph (the workspace is cleared)", "params": {}, "enabled": true},
+        {"id": "sendToGallery", "label": "File the workspace graph in the gallery as a card", "params": {"name": "short title"}, "enabled": true}
     ])
 }
 
@@ -134,6 +175,18 @@ mod tests {
         let bad = g.control("engine.execute", json!({"command": "setMode", "params": {"mode": "9d"}}));
         assert!(bad.is_err());
         assert!(g.control("nope", json!({})).is_err());
+    }
+
+    #[test]
+    fn the_assistant_makes_a_graph_and_files_it() {
+        let mut g = GraphApp::new();
+        let before = g.app.gallery_len();
+        g.control("engine.execute", json!({"command": "newGraph", "params": {}})).unwrap();
+        g.control("engine.execute", json!({"command": "addItem", "params": {"id": "q1", "kind": "equation", "latex": "y=x^2"}})).unwrap();
+        let r = g.control("engine.execute", json!({"command": "sendToGallery", "params": {"name": "A parabola"}})).unwrap();
+        assert!(r["card"].as_str().is_some_and(|k| !k.is_empty()));
+        assert_eq!(r["graphs_in_gallery"].as_u64(), Some(before as u64 + 1));
+        assert!(g.take_prompts().is_empty());
     }
 
     #[test]
