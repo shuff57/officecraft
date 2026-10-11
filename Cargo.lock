@@ -2193,6 +2193,7 @@ checksum = "773fa9c96dd0dbef887e39d0ed6177f141cce4d68e6041df77570aa3702dfa13"
 [[package]]
 name = "equashion-egui"
 version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=9b6b1690deafa670b60978636461343d16c5f788#9b6b1690deafa670b60978636461343d16c5f788"
 dependencies = [
  "egui",
  "equashion-layout",
@@ -2203,6 +2204,7 @@ dependencies = [
 [[package]]
 name = "equashion-font"
 version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=9b6b1690deafa670b60978636461343d16c5f788#9b6b1690deafa670b60978636461343d16c5f788"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
@@ -2214,6 +2216,7 @@ dependencies = [
 [[package]]
 name = "equashion-layout"
 version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=9b6b1690deafa670b60978636461343d16c5f788#9b6b1690deafa670b60978636461343d16c5f788"
 dependencies = [
  "equashion-font",
  "equashion-math",
@@ -2223,6 +2226,7 @@ dependencies = [
 [[package]]
 name = "equashion-math"
 version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=9b6b1690deafa670b60978636461343d16c5f788#9b6b1690deafa670b60978636461343d16c5f788"
 dependencies = [
  "quick-xml 0.38.4",
  "serde",
@@ -2232,6 +2236,7 @@ dependencies = [
 [[package]]
 name = "equashion-render"
 version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=9b6b1690deafa670b60978636461343d16c5f788#9b6b1690deafa670b60978636461343d16c5f788"
 dependencies = [
  "equashion-layout",
  "kurbo 0.13.1",

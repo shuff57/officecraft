@@ -35,12 +35,3 @@ hayro-jbig2 = { path = "../pdfcraft/vendor/hayro-jbig2" }
 lopdf = { path = "../pdfcraft/vendor/lopdf" }
 winit = { path = "../pdfcraft/vendor/winit" }
 egui-wgpu = { path = "../pdfcraft/vendor/egui-wgpu" }
-
-# DeckCraft and WordCraft (equashion-editor branches) take the equaSHion crates as a pinned git
-# rev; build against the local checkout until the galleries are pushed and the rev is bumped.
-[patch."https://github.com/shuff57/equaSHion"]
-equashion-math = { path = "../equaSHion/crates/math" }
-equashion-font = { path = "../equaSHion/crates/font" }
-equashion-layout = { path = "../equaSHion/crates/layout" }
-equashion-render = { path = "../equaSHion/crates/render" }
-equashion-egui = { path = "../equaSHion/crates/egui" }
