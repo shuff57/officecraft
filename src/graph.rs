@@ -211,7 +211,7 @@ impl GraphApp {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             if ui.button("Open…").clicked() {
-                let picked = rfd::FileDialog::new().add_filter("viSHual graph", &["vishual", "json"]).pick_file();
+                let picked = rfd::FileDialog::new().add_filter("viSHual graph", &["vshl", "vishual", "json"]).pick_file();
                 if let Some(p) = picked {
                     self.status = match self.open_path(&p.to_string_lossy()) {
                         Ok(()) => String::new(),
@@ -224,8 +224,8 @@ impl GraphApp {
                     .path
                     .as_deref()
                     .and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()).map(str::to_string))
-                    .unwrap_or_else(|| "graph.vishual".into());
-                let picked = rfd::FileDialog::new().set_file_name(name).add_filter("viSHual graph", &["vishual"]).save_file();
+                    .unwrap_or_else(|| "graph.vshl".into());
+                let picked = rfd::FileDialog::new().set_file_name(name).add_filter("viSHual graph", &["vshl"]).save_file();
                 if let Some(p) = picked {
                     self.status = match self.save_to(&p.to_string_lossy()) {
                         Ok(()) => String::new(),
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn a_graph_round_trips_through_a_file() {
         let mut g = GraphApp::new();
-        let path = std::env::temp_dir().join(format!("officecraft-graph-{}.vishual", std::process::id()));
+        let path = std::env::temp_dir().join(format!("officecraft-graph-{}.vshl", std::process::id()));
         let p = path.to_string_lossy().to_string();
         g.save_to(&p).ok();
         let mut h = GraphApp::new();
@@ -492,6 +492,6 @@ mod tests {
         assert_eq!(h.rows.len(), g.rows.len());
         assert!(!h.changed);
         let _ = std::fs::remove_file(path);
-        assert!(h.open_path("/no/such/file.vishual").is_err());
+        assert!(h.open_path("/no/such/file.vshl").is_err());
     }
 }

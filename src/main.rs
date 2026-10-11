@@ -157,13 +157,13 @@ fn kind_for(path: &str) -> Option<Kind> {
         "xlsx" | "xlsm" | "csv" | "tsv" => Some(Kind::Grid),
         "pptx" | "potx" | "ppsx" | "deckcraft" => Some(Kind::Deck),
         "pdf" => Some(Kind::Pdf),
-        "vishual" => Some(Kind::Graph),
+        "vshl" | "vishual" => Some(Kind::Graph),
         _ => None,
     }
 }
 
 const OPEN_EXTS: &[&str] = &[
-    "docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "xlsx", "xlsm", "csv", "tsv", "pptx", "potx", "ppsx", "deckcraft", "pdf", "vishual",
+    "docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "xlsx", "xlsm", "csv", "tsv", "pptx", "potx", "ppsx", "deckcraft", "pdf", "vshl", "vishual",
 ];
 const MAX_RECENT: usize = 12;
 
@@ -271,16 +271,28 @@ fn row_for(path: &str) -> Row {
     }
 }
 
-/// Supported files directly inside `dir`, newest first.
+/// Supported files in `dir` and the folders two levels below it, newest first.
 fn list_folder(dir: &str) -> Vec<Row> {
-    let Ok(read) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut rows: Vec<Row> = read
-        .flatten()
-        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-        .filter_map(|e| e.path().to_str().map(str::to_string))
-        .filter(|p| kind_for(p).is_some())
-        .map(|p| row_for(&p))
-        .collect();
+    let mut rows: Vec<Row> = Vec::new();
+    let mut stack = vec![(std::path::PathBuf::from(dir), 0u8)];
+    while let Some((d, depth)) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&d) else { continue };
+        for e in read.flatten() {
+            let path = e.path();
+            let hidden = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
+            let Ok(ft) = e.file_type() else { continue };
+            if hidden {
+                continue;
+            }
+            if ft.is_dir() && depth < 2 {
+                stack.push((path, depth + 1));
+            } else if ft.is_file()
+                && let Some(p) = path.to_str().filter(|p| kind_for(p).is_some())
+            {
+                rows.push(row_for(p));
+            }
+        }
+    }
     rows.sort_by(|a, b| b.modified.cmp(&a.modified));
     rows.truncate(500);
     rows
@@ -304,20 +316,242 @@ fn save_folders(list: &[String]) {
     }
 }
 
-/// A rounded square in the app's colour with its initial: the file-type mark used on tabs and Home.
-fn badge(ui: &mut egui::Ui, kind: Option<Kind>, size: f32) {
-    let (color, text) = match kind {
-        Some(Kind::Word) => (egui::Color32::from_rgb(46, 110, 200), "D"),
-        Some(Kind::Grid) => (egui::Color32::from_rgb(36, 140, 84), "S"),
-        Some(Kind::Deck) => (egui::Color32::from_rgb(214, 104, 38), "P"),
-        Some(Kind::Pdf) => (egui::Color32::from_rgb(196, 48, 48), "PDF"),
-        Some(Kind::Graph) => (egui::Color32::from_rgb(110, 70, 190), "G"),
-        None => (egui::Color32::GRAY, "?"),
+fn kind_color(kind: Option<Kind>) -> egui::Color32 {
+    match kind {
+        Some(Kind::Word) => egui::Color32::from_rgb(47, 99, 198),
+        Some(Kind::Grid) => egui::Color32::from_rgb(31, 143, 92),
+        Some(Kind::Deck) => egui::Color32::from_rgb(212, 98, 46),
+        Some(Kind::Pdf) => egui::Color32::from_rgb(194, 59, 69),
+        Some(Kind::Graph) => egui::Color32::from_rgb(183, 121, 31),
+        None => egui::Color32::GRAY,
+    }
+}
+
+/// The one chrome accent on Home: selection, primary button, active toggle.
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(11, 122, 117);
+
+/// Home's own look: the light, cool-grey surface with a white sidebar and one teal accent.
+fn home_visuals() -> egui::Visuals {
+    let mut v = egui::Visuals::light();
+    v.panel_fill = egui::Color32::from_rgb(237, 241, 245);
+    v.window_fill = egui::Color32::WHITE;
+    v.extreme_bg_color = egui::Color32::WHITE;
+    let line = egui::Stroke::new(1.0, egui::Color32::from_rgb(207, 214, 223));
+    v.widgets.noninteractive.bg_stroke = line;
+    v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, INK);
+    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, INK);
+    v.widgets.noninteractive.weak_bg_fill = egui::Color32::WHITE;
+    v.widgets.inactive.bg_stroke = line;
+    v.widgets.inactive.weak_bg_fill = egui::Color32::WHITE;
+    v.selection.bg_fill = ACCENT;
+    v.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    v.hyperlink_color = ACCENT;
+    let r = egui::CornerRadius::same(8);
+    v.widgets.noninteractive.corner_radius = r;
+    v.widgets.inactive.corner_radius = r;
+    v.widgets.hovered.corner_radius = r;
+    v.widgets.active.corner_radius = r;
+    v.widgets.open.corner_radius = r;
+    v
+}
+
+
+const INK: egui::Color32 = egui::Color32::from_rgb(23, 32, 43);
+const MUTED: egui::Color32 = egui::Color32::from_rgb(116, 128, 142);
+const SOFT: egui::Color32 = egui::Color32::from_rgb(69, 81, 95);
+const SEL_BG: egui::Color32 = egui::Color32::from_rgb(221, 241, 239);
+const HAIRLINE: egui::Color32 = egui::Color32::from_rgb(238, 241, 244);
+const LINE: egui::Color32 = egui::Color32::from_rgb(220, 226, 234);
+
+/// egui applies new fonts on the frame after `set_fonts`, so the bold family is only named once
+/// that frame has come, and never while another app's fonts are installed.
+static BOLD_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn bold() -> egui::FontFamily {
+    if BOLD_READY.load(std::sync::atomic::Ordering::Relaxed) {
+        egui::FontFamily::Name("home_bold".into())
+    } else {
+        egui::FontFamily::Proportional
+    }
+}
+
+fn b(text: &str, size: f32) -> egui::RichText {
+    egui::RichText::new(text).font(egui::FontId::new(size, bold()))
+}
+
+/// Noto Sans for Home when the system has it; the apps install their own fonts again on return.
+fn install_home_fonts(ctx: &egui::Context) {
+    let load = |names: &[&str]| names.iter().find_map(|p| std::fs::read(p).ok());
+    let regular = load(&[
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/open-sans/OpenSans-Regular.ttf",
+    ]);
+    let semi = load(&[
+        "/usr/share/fonts/google-noto/NotoSans-SemiBold.ttf",
+        "/usr/share/fonts/noto/NotoSans-SemiBold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/open-sans/OpenSans-Semibold.ttf",
+    ]);
+    let mut fonts = egui::FontDefinitions::default();
+    if let Some(bytes) = regular {
+        fonts.font_data.insert("home_regular".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+        if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            list.insert(0, "home_regular".into());
+        }
+    }
+    let mut bold_list = fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
+    if let Some(bytes) = semi {
+        fonts.font_data.insert("home_semibold".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+        bold_list.insert(0, "home_semibold".into());
+    }
+    fonts.families.insert(bold(), bold_list);
+    ctx.set_fonts(fonts);
+}
+
+fn kind_abbr(kind: Option<Kind>) -> &'static str {
+    match kind {
+        Some(Kind::Word) => "Dc",
+        Some(Kind::Grid) => "Sh",
+        Some(Kind::Deck) => "Sl",
+        Some(Kind::Pdf) => "Pd",
+        Some(Kind::Graph) => "Gr",
+        None => "?",
+    }
+}
+
+fn paint_folder(p: &egui::Painter, c: egui::Pos2, col: egui::Color32) {
+    let st = egui::Stroke::new(1.4, col);
+    let r = egui::Rect::from_center_size(c + egui::vec2(0.0, 1.0), egui::vec2(14.0, 10.0));
+    p.rect_stroke(r, 2.0, st, egui::StrokeKind::Inside);
+    p.line_segment([r.left_top() + egui::vec2(1.0, -2.0), r.left_top() + egui::vec2(5.5, -2.0)], st);
+}
+
+fn paint_search(p: &egui::Painter, c: egui::Pos2, col: egui::Color32) {
+    let st = egui::Stroke::new(1.6, col);
+    p.circle_stroke(c + egui::vec2(-1.5, -1.5), 5.0, st);
+    p.line_segment([c + egui::vec2(2.0, 2.0), c + egui::vec2(6.0, 6.0)], st);
+}
+
+/// One sidebar row: optional folder icon, label, count on the right (or a remove cross on hover).
+fn side_row(ui: &mut egui::Ui, selected: bool, icon: bool, label: &str, count: Option<usize>, removable: bool) -> (egui::Response, bool) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
+    let hovered = resp.hovered();
+    let p = ui.painter();
+    if selected {
+        p.rect_filled(rect, 8.0, SEL_BG);
+    } else if hovered {
+        p.rect_filled(rect, 8.0, egui::Color32::from_gray(244));
+    }
+    let ink = if selected { ACCENT } else { SOFT };
+    let mut x = rect.left() + 10.0;
+    if icon {
+        paint_folder(p, egui::pos2(x + 8.0, rect.center().y), ink);
+        x += 26.0;
+    }
+    let font = if selected { egui::FontId::new(14.0, bold()) } else { egui::FontId::proportional(14.0) };
+    p.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, label, font, ink);
+    let mut removed = false;
+    if removable && hovered {
+        let xr = egui::Rect::from_center_size(egui::pos2(rect.right() - 18.0, rect.center().y), egui::vec2(20.0, 20.0));
+        p.text(xr.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(17.0), MUTED);
+        removed = resp.clicked() && resp.interact_pointer_pos().is_some_and(|q| xr.expand(6.0).contains(q));
+    } else if let Some(n) = count {
+        let col = if selected { ACCENT } else { MUTED };
+        p.text(egui::pos2(rect.right() - 12.0, rect.center().y), egui::Align2::RIGHT_CENTER, n.to_string(), egui::FontId::proportional(13.0), col);
+    }
+    (resp.on_hover_cursor(egui::CursorIcon::PointingHand), removed)
+}
+
+/// A segment in the white filter bar: dark fill when selected.
+fn pill(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
+    let w = label.chars().count() as f32 * 7.8 + 28.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 30.0), egui::Sense::click());
+    let p = ui.painter();
+    if selected {
+        p.rect_filled(rect, 8.0, INK);
+    }
+    let (font, col) = if selected { (egui::FontId::new(13.0, bold()), egui::Color32::WHITE) } else { (egui::FontId::proportional(13.0), SOFT) };
+    p.text(rect.center(), egui::Align2::CENTER_CENTER, label, font, col);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn framed() -> egui::Frame {
+    egui::Frame::new().fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(10.0)
+}
+
+fn home_view_file() -> Option<std::path::PathBuf> {
+    recent_file().map(|p| p.with_file_name("homeview.txt"))
+}
+
+fn load_home_grid() -> bool {
+    home_view_file().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| s.trim() != "list").unwrap_or(true)
+}
+
+fn save_home_grid(grid: bool) {
+    if let Some(p) = home_view_file() {
+        let _ = std::fs::write(p, if grid { "grid" } else { "list" });
+    }
+}
+
+/// A small drawn preview of what the file is, centred in `area`. No file is opened to make it.
+fn thumb(painter: &egui::Painter, kind: Option<Kind>, area: egui::Rect) {
+    let c = kind_color(kind);
+    let paper = egui::Color32::from_gray(250);
+    let line = egui::Color32::from_gray(205);
+    let r = |x: f32, y: f32, w: f32, h: f32, col: egui::Color32, round: f32, base: egui::Rect| {
+        painter.rect_filled(egui::Rect::from_min_size(base.min + egui::vec2(x, y), egui::vec2(w, h)), round, col);
     };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-    ui.painter().rect_filled(rect, size * 0.22, color);
-    let font = if text.len() > 1 { size * 0.3 } else { size * 0.52 };
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(font), egui::Color32::WHITE);
+    let center = area.center();
+    match kind {
+        Some(Kind::Word) | Some(Kind::Pdf) => {
+            let page = egui::Rect::from_center_size(center, egui::vec2(58.0, 74.0));
+            painter.rect_filled(page, 3.0, paper);
+            if kind == Some(Kind::Pdf) {
+                r(9.0, 10.0, 40.0, 3.0, line, 1.0, page);
+                r(9.0, 22.0, 40.0, 22.0, egui::Color32::from_gray(232), 2.0, page);
+                painter.text(page.left_bottom() + egui::vec2(9.0, -9.0), egui::Align2::LEFT_CENTER, "PDF", egui::FontId::proportional(9.0), c);
+            } else {
+                r(9.0, 10.0, 30.0, 5.0, c, 1.0, page);
+                for (i, w) in [40.0, 40.0, 30.0, 40.0].into_iter().enumerate() {
+                    r(9.0, 24.0 + i as f32 * 9.0, w, 3.0, line, 1.0, page);
+                }
+            }
+        }
+        Some(Kind::Grid) => {
+            let sheet = egui::Rect::from_center_size(center, egui::vec2(96.0, 60.0));
+            painter.rect_filled(sheet, 3.0, line);
+            let (cw, ch) = (23.5, 14.0);
+            for row in 0..4 {
+                for col in 0..4 {
+                    let fill = if row == 0 { c } else { paper };
+                    r(0.5 + col as f32 * (cw + 0.5), 0.5 + row as f32 * (ch + 0.5), cw, ch, fill, 0.0, sheet);
+                }
+            }
+        }
+        Some(Kind::Deck) => {
+            let slide = egui::Rect::from_center_size(center, egui::vec2(100.0, 62.0));
+            painter.rect_filled(slide, 3.0, paper);
+            r(12.0, 22.0, 62.0, 7.0, c, 2.0, slide);
+            r(12.0, 36.0, 40.0, 3.0, line, 1.0, slide);
+        }
+        Some(Kind::Graph) => {
+            let plot = egui::Rect::from_center_size(center, egui::vec2(100.0, 66.0));
+            painter.rect_filled(plot, 3.0, paper);
+            painter.hline(plot.x_range(), plot.center().y, egui::Stroke::new(1.0, line));
+            painter.vline(plot.center().x, plot.y_range(), egui::Stroke::new(1.0, line));
+            let pts: Vec<egui::Pos2> = (0..=24)
+                .map(|i| {
+                    let t = i as f32 / 24.0 * 2.0 - 1.0;
+                    egui::pos2(plot.center().x + t * 42.0, plot.center().y + 26.0 - t * t * 46.0)
+                })
+                .collect();
+            painter.add(egui::Shape::line(pts, egui::Stroke::new(2.5, c)));
+        }
+        None => {}
+    }
 }
 
 fn ago(t: std::time::SystemTime) -> String {
@@ -392,11 +626,35 @@ struct Suite {
     folders: Vec<String>,
     folder_sel: Option<usize>,
     folder_rows: Vec<Row>,
+    /// Home shows thumbnails (true) or a table (false). Remembered in `homeview.txt`.
+    home_grid: bool,
+    /// `OFFICECRAFT_SHOT=<file.ppm>`: draw Home for a few frames, save the window as a PPM, exit.
+    shot: Option<(String, u32)>,
+    home_styled: bool,
+    folder_counts: Vec<usize>,
 }
 
 impl Suite {
     fn new() -> Self {
-        Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent: load_recent(), pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders: load_folders(), folder_sel: None, folder_rows: Vec::new() }
+        let mut folders = load_folders();
+        // First run: show ~/Documents so Home is not an empty page.
+        if folders.is_empty()
+            && let Some(d) = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Documents")).filter(|d| d.is_dir())
+        {
+            folders.push(d.to_string_lossy().to_string());
+        }
+        let recent = load_recent();
+        let (folder_sel, folder_rows) = match folders.first() {
+            Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
+            _ => (None, Vec::new()),
+        };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, home_styled: false, folder_counts: Vec::new() };
+        suite.recount();
+        suite
+    }
+
+    fn recount(&mut self) {
+        self.folder_counts = self.folders.iter().map(|f| list_folder(f).len()).collect();
     }
 
     /// Starts a fresh, empty instance of `kind` and shows it.
@@ -530,131 +788,272 @@ impl Suite {
         let mut select: Option<Option<usize>> = None;
         let mut want_filter = self.filter;
 
+        let mut want_grid = self.home_grid;
+
         let source: Vec<Row> = match self.folder_sel {
             None => self.recent.iter().map(|p| row_for(p)).collect(),
             Some(_) => self.folder_rows.clone(),
         };
         let q = self.search.to_lowercase();
         let rows: Vec<Row> = source
-            .into_iter()
+            .iter()
             .filter(|r| match want_filter {
                 Filter::All => true,
                 Filter::Only(k) => r.kind == Some(k),
             })
             .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q) || r.folder.to_lowercase().contains(&q))
+            .cloned()
             .collect();
+        let title = match self.folder_sel.and_then(|i| self.folders.get(i)) {
+            Some(f) => std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone()),
+            None => "Recent files".to_string(),
+        };
 
-        egui::Panel::left("home_sidebar").exact_size(232.0).show(ui, |ui| {
-            ui.add_space(16.0);
-            ui.heading("OfficeCraft");
-            ui.add_space(14.0);
-            if ui.selectable_label(self.folder_sel.is_none(), format!("Recent   {}", self.recent.len())).clicked() {
-                select = Some(None);
-            }
-            ui.add_space(10.0);
-            ui.separator();
-            ui.strong("Folders");
-            for (i, f) in self.folders.iter().enumerate() {
-                let name = std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone());
+        egui::Panel::left("home_sidebar")
+            .exact_size(232.0)
+            .frame(egui::Frame::new().fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).inner_margin(egui::Margin::symmetric(12, 0)))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 3.0;
+                ui.add_space(20.0);
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(self.folder_sel == Some(i), name).on_hover_text(f).clicked() {
+                    ui.add_space(10.0);
+                    ui.label(b("OfficeCraft", 17.0));
+                });
+                ui.add_space(12.0);
+                if side_row(ui, self.folder_sel.is_none(), false, "Recent", Some(self.recent.len()), false).0.clicked() {
+                    select = Some(None);
+                }
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    ui.label(b("FOLDERS", 12.0).color(MUTED));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(10.0);
+                        if ui.add(egui::Button::new(b("+", 18.0).color(ACCENT)).frame(false)).on_hover_text("Add folder").clicked() {
+                            add_folder = true;
+                        }
+                    });
+                });
+                for (i, f) in self.folders.iter().enumerate() {
+                    let name = std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone());
+                    let (resp, removed) = side_row(ui, self.folder_sel == Some(i), true, &name, self.folder_counts.get(i).copied(), true);
+                    let resp = resp.on_hover_text(f);
+                    if removed {
+                        remove_folder = Some(i);
+                    } else if resp.clicked() {
                         select = Some(Some(i));
                     }
-                    if ui.small_button("×").on_hover_text("Remove from list (files stay on disk)").clicked() {
-                        remove_folder = Some(i);
-                    }
-                });
-            }
-            if ui.button("Add folder…").clicked() {
-                add_folder = true;
-            }
-        });
+                }
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
+                let p = ui.painter();
+                if resp.hovered() {
+                    p.rect_filled(rect, 8.0, egui::Color32::from_gray(244));
+                }
+                p.text(rect.left_center() + egui::vec2(16.0, 0.0), egui::Align2::CENTER_CENTER, "+", egui::FontId::new(18.0, bold()), ACCENT);
+                p.text(rect.left_center() + egui::vec2(36.0, 0.0), egui::Align2::LEFT_CENTER, "Add folder", egui::FontId::new(14.0, bold()), ACCENT);
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    add_folder = true;
+                }
+            });
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.add_space(14.0);
-            ui.strong("QUICK START");
-            ui.add_space(6.0);
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::from_rgb(237, 241, 245)).inner_margin(egui::Margin::symmetric(36, 26))).show(ui, |ui| {
             ui.horizontal(|ui| {
-                for (kind, title, sub) in [
-                    (Kind::Word, "New document", ".docx"),
-                    (Kind::Grid, "New spreadsheet", ".xlsx"),
-                    (Kind::Deck, "New presentation", ".pptx"),
-                    (Kind::Pdf, "PDF tools", ".pdf"),
-                    (Kind::Graph, "New graph", ".vishual"),
-                ] {
-                    let card = egui::Frame::group(ui.style()).corner_radius(10.0).show(ui, |ui| {
-                        ui.set_width(150.0);
-                        badge(ui, Some(kind), 30.0);
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(title).strong());
-                        ui.weak(sub);
+                ui.label(b(&title, 24.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.scope(|ui| {
+                        let hover = egui::Color32::from_rgb(9, 100, 96);
+                        let v = ui.visuals_mut();
+                        for (w, fill) in [(&mut v.widgets.inactive, ACCENT), (&mut v.widgets.hovered, hover), (&mut v.widgets.active, hover), (&mut v.widgets.open, hover)] {
+                            w.weak_bg_fill = fill;
+                            w.bg_fill = fill;
+                            w.bg_stroke = egui::Stroke::NONE;
+                            w.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+                            w.corner_radius = egui::CornerRadius::same(10);
+                        }
+                        ui.spacing_mut().button_padding = egui::vec2(18.0, 10.0);
+                        ui.menu_button(b("New file", 14.0).color(egui::Color32::WHITE), |ui| {
+                            *ui.visuals_mut() = home_visuals();
+                            for kind in Kind::ALL {
+                                if ui.button(format!("New {}", kind.label())).clicked() {
+                                    new = Some(kind);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                    let open_btn = egui::Button::new(b("Open file", 14.0)).fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(10.0).min_size(egui::vec2(0.0, 40.0));
+                    if ui.add(open_btn).clicked() {
+                        pick_files = true;
+                    }
+                    framed().inner_margin(egui::Margin::symmetric(12, 0)).show(ui, |ui| {
+                        ui.set_height(38.0);
+                        ui.horizontal_centered(|ui| {
+                            let (r, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                            paint_search(ui.painter(), r.center(), MUTED);
+                            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search").frame(egui::Frame::NONE).desired_width(220.0));
+                        });
+                    });
+                });
+            });
+            if let Some(n) = &self.notice {
+                ui.add_space(6.0);
+                ui.colored_label(egui::Color32::from_rgb(190, 40, 50), n);
+            }
+
+            ui.add_space(18.0);
+            let starts = [(Kind::Word, "Document", "Docs"), (Kind::Grid, "Spreadsheet", "Sheets"), (Kind::Deck, "Presentation", "Slides"), (Kind::Pdf, "PDF tools", "PDF"), (Kind::Graph, "Graph", "Graphs")];
+            ui.spacing_mut().item_spacing.x = 12.0;
+            ui.columns(5, |cols| {
+                for (col, (kind, label, sub)) in cols.iter_mut().zip(starts) {
+                    let card = framed().inner_margin(egui::Margin::symmetric(12, 10)).show(col, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(egui::vec2(26.0, 34.0), egui::Sense::hover());
+                            ui.painter().rect_filled(r, 5.0, kind_color(Some(kind)));
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                ui.label(b(label, 14.0));
+                                ui.label(egui::RichText::new(sub).size(12.0).color(MUTED));
+                            });
+                        });
                     });
                     let r = card.response.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
                     if r.clicked() {
                         new = Some(kind);
                     }
                 }
-                let card = egui::Frame::group(ui.style()).corner_radius(10.0).show(ui, |ui| {
-                    ui.set_width(150.0);
-                    ui.label(egui::RichText::new("📂").size(26.0));
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("Open file…").strong());
-                    ui.weak("docx xlsx pptx pdf md html csv");
-                });
-                if card.response.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    pick_files = true;
-                }
             });
-            if let Some(n) = &self.notice {
-                ui.add_space(8.0);
-                ui.colored_label(egui::Color32::LIGHT_RED, n);
-            }
 
-            ui.add_space(18.0);
+            ui.add_space(20.0);
             ui.horizontal(|ui| {
-                for (f, label) in [
-                    (Filter::All, "All"),
-                    (Filter::Only(Kind::Word), "Docs"),
-                    (Filter::Only(Kind::Grid), "Sheets"),
-                    (Filter::Only(Kind::Deck), "Slides"),
-                    (Filter::Only(Kind::Pdf), "PDF"),
-                    (Filter::Only(Kind::Graph), "Graphs"),
-                ] {
-                    if ui.selectable_label(want_filter == f, label).clicked() {
-                        want_filter = f;
+                framed().inner_margin(3.0).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.horizontal(|ui| {
+                        for (f, label) in [
+                            (Filter::All, "All"),
+                            (Filter::Only(Kind::Word), "Docs"),
+                            (Filter::Only(Kind::Grid), "Sheets"),
+                            (Filter::Only(Kind::Deck), "Slides"),
+                            (Filter::Only(Kind::Pdf), "PDF"),
+                            (Filter::Only(Kind::Graph), "Graphs"),
+                        ] {
+                            if pill(ui, want_filter == f, label).clicked() {
+                                want_filter = f;
+                            }
+                        }
+                    });
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(80.0, 36.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 10.0, egui::Color32::WHITE);
+                    ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, LINE), egui::StrokeKind::Inside);
+                    for (i, grid_icon) in [true, false].into_iter().enumerate() {
+                        let cell = egui::Rect::from_min_size(rect.min + egui::vec2(3.0 + i as f32 * 36.0, 3.0), egui::vec2(34.0, 30.0));
+                        let active = want_grid == grid_icon;
+                        let resp = ui.interact(cell, ui.id().with(("home_view", i)), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if active {
+                            ui.painter().rect_filled(cell, 8.0, INK);
+                        }
+                        let col = if active { egui::Color32::WHITE } else { MUTED };
+                        let st = egui::Stroke::new(1.5, col);
+                        let c = cell.center();
+                        let p = ui.painter();
+                        if grid_icon {
+                            for (dx, dy) in [(-4.5, -4.5), (4.5, -4.5), (-4.5, 4.5), (4.5, 4.5)] {
+                                p.rect_stroke(egui::Rect::from_center_size(c + egui::vec2(dx, dy), egui::vec2(6.0, 6.0)), 1.0, st, egui::StrokeKind::Inside);
+                            }
+                        } else {
+                            for dy in [-5.0, 0.0, 5.0] {
+                                p.line_segment([c + egui::vec2(-7.0, dy), c + egui::vec2(7.0, dy)], st);
+                            }
+                        }
+                        if resp.clicked() {
+                            want_grid = grid_icon;
+                        }
                     }
-                }
-                ui.add_space(12.0);
-                ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search files").desired_width(240.0));
+                    ui.label(egui::RichText::new("Last modified").size(13.0).color(SOFT));
+                });
             });
-            ui.add_space(8.0);
+            ui.add_space(14.0);
 
             if rows.is_empty() {
-                ui.weak(if self.folder_sel.is_some() { "No supported files in this folder." } else { "Files you open appear here." });
-            } else {
+                ui.add_space(24.0);
+                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { "Files you open appear here. Drop a file on the window, or press Open file." }).color(MUTED));
+            } else if want_grid {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                    egui::Grid::new("home_files").num_columns(5).striped(true).spacing([18.0, 8.0]).min_col_width(24.0).show(ui, |ui| {
-                        ui.label("");
-                        ui.weak("Name");
-                        ui.weak("Folder");
-                        ui.weak("Modified");
-                        ui.weak("Size");
-                        ui.end_row();
+                    let gap = 16.0;
+                    let avail = ui.available_width() - 14.0;
+                    let cols = ((avail + gap) / (200.0 + gap)).floor().max(1.0);
+                    let card_w = ((avail - gap * (cols - 1.0)) / cols).floor();
+                    ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
+                    for chunk in rows.chunks(cols as usize) {
+                        ui.horizontal(|ui| {
+                            for r in chunk {
+                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 164.0), egui::Sense::click());
+                                let resp = resp.on_hover_text(&r.path).on_hover_cursor(egui::CursorIcon::PointingHand);
+                                let stroke = if resp.hovered() { egui::Stroke::new(1.5, ACCENT) } else { egui::Stroke::new(1.0, LINE) };
+                                let p = ui.painter();
+                                p.rect_filled(rect, 10.0, egui::Color32::WHITE);
+                                let top = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 96.0));
+                                p.rect_filled(top, egui::CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 }, kind_color(r.kind).gamma_multiply(0.14));
+                                thumb(p, r.kind, top);
+                                p.rect_stroke(rect, 10.0, stroke, egui::StrokeKind::Inside);
+                                let name: String = if r.name.chars().count() > 26 { r.name.chars().take(25).collect::<String>() + "…" } else { r.name.clone() };
+                                p.text(rect.min + egui::vec2(14.0, 110.0), egui::Align2::LEFT_TOP, name, egui::FontId::new(14.0, bold()), INK);
+                                let sub = match r.modified {
+                                    Some(t) => format!("{}, {}", r.folder, ago(t)),
+                                    None => r.folder.clone(),
+                                };
+                                p.text(rect.min + egui::vec2(14.0, 136.0), egui::Align2::LEFT_TOP, sub, egui::FontId::proportional(12.0), MUTED);
+                                if resp.clicked() {
+                                    open = Some(r.path.clone());
+                                }
+                            }
+                        });
+                    }
+                });
+            } else {
+                framed().show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let w = ui.available_width();
+                    let cols = [64.0, w * 0.50, w * 0.74, w * 0.87];
+                    let (hdr, _) = ui.allocate_exact_size(egui::vec2(w, 38.0), egui::Sense::hover());
+                    for (x, t) in cols.iter().zip(["Name", "Folder", "Modified", "Size"]) {
+                        ui.painter().text(hdr.min + egui::vec2(*x, 19.0), egui::Align2::LEFT_CENTER, t, egui::FontId::proportional(12.0), MUTED);
+                    }
+                    ui.painter().hline(hdr.x_range(), hdr.bottom(), egui::Stroke::new(1.0, HAIRLINE));
+                    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                         for r in &rows {
-                            badge(ui, r.kind, 20.0);
-                            let name = ui.add(egui::Label::new(egui::RichText::new(&r.name)).sense(egui::Sense::click()).truncate());
-                            if name.on_hover_text(&r.path).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 45.0), egui::Sense::click());
+                            let resp = resp.on_hover_text(&r.path).on_hover_cursor(egui::CursorIcon::PointingHand);
+                            let p = ui.painter();
+                            if resp.hovered() {
+                                p.rect_filled(rect, 0.0, egui::Color32::from_rgb(246, 248, 250));
+                            }
+                            let mid = rect.center().y;
+                            let badge_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 28.0, mid), egui::vec2(24.0, 24.0));
+                            p.rect_filled(badge_rect, 6.0, kind_color(r.kind));
+                            p.text(badge_rect.center(), egui::Align2::CENTER_CENTER, kind_abbr(r.kind), egui::FontId::new(11.0, bold()), egui::Color32::WHITE);
+                            let clip = p.with_clip_rect(egui::Rect::from_min_max(rect.min + egui::vec2(cols[0], 0.0), egui::pos2(rect.left() + cols[1] - 12.0, rect.bottom())));
+                            clip.text(egui::pos2(rect.left() + cols[0], mid), egui::Align2::LEFT_CENTER, &r.name, egui::FontId::new(14.0, bold()), INK);
+                            let clip2 = p.with_clip_rect(egui::Rect::from_min_max(egui::pos2(rect.left() + cols[1], rect.top()), egui::pos2(rect.left() + cols[2] - 12.0, rect.bottom())));
+                            clip2.text(egui::pos2(rect.left() + cols[1], mid), egui::Align2::LEFT_CENTER, &r.folder, egui::FontId::proportional(14.0), SOFT);
+                            p.text(egui::pos2(rect.left() + cols[2], mid), egui::Align2::LEFT_CENTER, r.modified.map(ago).unwrap_or_default(), egui::FontId::proportional(14.0), SOFT);
+                            p.text(egui::pos2(rect.left() + cols[3], mid), egui::Align2::LEFT_CENTER, human_size(r.size), egui::FontId::proportional(14.0), SOFT);
+                            p.hline(rect.x_range(), rect.bottom(), egui::Stroke::new(1.0, HAIRLINE));
+                            if resp.clicked() {
                                 open = Some(r.path.clone());
                             }
-                            ui.weak(&r.folder);
-                            ui.weak(r.modified.map(ago).unwrap_or_default());
-                            ui.weak(human_size(r.size));
-                            ui.end_row();
                         }
                     });
                 });
             }
         });
+
+        if want_grid != self.home_grid {
+            self.home_grid = want_grid;
+            save_home_grid(want_grid);
+        }
 
         self.filter = want_filter;
         if let Some(s) = select {
@@ -666,6 +1065,7 @@ impl Suite {
             save_folders(&self.folders);
             self.folder_sel = None;
             self.folder_rows.clear();
+            self.recount();
         }
         if add_folder && let Some(dir) = rfd::FileDialog::new().pick_folder() {
             let dir = dir.to_string_lossy().to_string();
@@ -673,6 +1073,7 @@ impl Suite {
                 self.folders.push(dir.clone());
                 save_folders(&self.folders);
             }
+            self.recount();
             let i = self.folders.iter().position(|f| *f == dir);
             self.folder_sel = i;
             self.folder_rows = list_folder(&dir);
@@ -754,6 +1155,25 @@ fn ai_app(kind: Kind) -> ai::App {
 
 impl eframe::App for Suite {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if let Some((path, n)) = self.shot.as_mut() {
+            *n += 1;
+            ctx.request_repaint();
+            if *n == 20 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            }
+            let img = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
+            if let Some(img) = img {
+                let [w, h] = img.size;
+                let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+                out.extend(img.pixels.iter().flat_map(|c| [c.r(), c.g(), c.b()]));
+                let ok = std::fs::write(&*path, out).is_ok();
+                std::process::exit(if ok { 0 } else { 1 });
+            }
+            if *n > 400 {
+                eprintln!("shot: no screenshot event arrived");
+                std::process::exit(1);
+            }
+        }
         if let Some(n) = self.selftest {
             const EVERY: u64 = 40;
             if n == 0 {
@@ -775,6 +1195,23 @@ impl eframe::App for Suite {
             }
             self.selftest = Some(n + 1);
             ctx.request_repaint();
+        }
+        if self.view == View::Home {
+            if !self.home_styled {
+                BOLD_READY.store(false, std::sync::atomic::Ordering::Relaxed);
+                ctx.set_visuals(home_visuals());
+                install_home_fonts(ctx);
+                self.home_styled = true;
+                // The next tab shown must install its own fonts and visuals again.
+                self.ctx_owner = None;
+                ctx.request_repaint();
+            } else {
+                let bound = ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("home_bold".into())));
+                BOLD_READY.store(bound, std::sync::atomic::Ordering::Relaxed);
+            }
+        } else {
+            self.home_styled = false;
+            BOLD_READY.store(false, std::sync::atomic::Ordering::Relaxed);
         }
         for p in std::mem::take(&mut self.pending) {
             self.open_file(ctx, &p);
@@ -831,14 +1268,27 @@ impl eframe::App for Suite {
         let mut close: Option<u64> = None;
         let mut new: Option<Kind> = None;
         let mut toggle_chat: Option<u64> = None;
-        egui::Panel::top("officecraft_tabs").exact_size(32.0).show(ui, |ui| {
+        let bar_frame = if self.view == View::Home {
+            egui::Frame::new().fill(egui::Color32::from_rgb(223, 229, 236)).inner_margin(egui::Margin::symmetric(8, 4))
+        } else {
+            egui::Frame::side_top_panel(ui.style())
+        };
+        egui::Panel::top("officecraft_tabs").exact_size(34.0).frame(bar_frame).show(ui, |ui| {
             ui.horizontal_centered(|ui| {
-                if ui.selectable_label(self.view == View::Home, "Home").clicked() {
+                let home_on = self.view == View::Home;
+                let (hr, hresp) = ui.allocate_exact_size(egui::vec2(64.0, 26.0), egui::Sense::click());
+                if home_on {
+                    ui.painter().rect_filled(hr, egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, egui::Color32::from_rgb(237, 241, 245));
+                }
+                let (hf, hc) = if home_on { (egui::FontId::new(14.0, bold()), INK) } else { (egui::FontId::proportional(14.0), ui.visuals().text_color()) };
+                ui.painter().text(hr.center(), egui::Align2::CENTER_CENTER, "Home", hf, hc);
+                if hresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     select = Some(View::Home);
                 }
                 for e in &self.entries {
                     let title = if e.tab.is_dirty() { format!("{} •", e.name) } else { e.name.clone() };
-                    badge(ui, Some(e.kind), 16.0);
+                    let (stripe, _) = ui.allocate_exact_size(egui::vec2(3.0, 14.0), egui::Sense::hover());
+                    ui.painter().rect_filled(stripe, 1.5, kind_color(Some(e.kind)));
                     let shown = title;
                     if ui.selectable_label(self.view == View::Tab(e.id), shown).on_hover_text(e.path.as_deref().unwrap_or("Not saved yet")).clicked() {
                         select = Some(View::Tab(e.id));
@@ -963,7 +1413,10 @@ fn main() -> eframe::Result {
     if std::env::var_os("OFFICECRAFT_SELFTEST").is_some() {
         suite.selftest = Some(0);
     }
-    let selftest = suite.selftest.is_some() || suite.ai_selftest.is_some();
+    if let Ok(p) = std::env::var("OFFICECRAFT_SHOT") {
+        suite.shot = Some((p, 0));
+    }
+    let selftest = suite.selftest.is_some() || suite.ai_selftest.is_some() || suite.shot.is_some();
     if selftest {
         suite.persist = false;
     } else {
