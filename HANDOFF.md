@@ -41,7 +41,7 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
 
 ## Warnings
 1. **A second Claude session is editing this same directory.** It added a Graph tab (viSHual engine,
-   `src/graph.rs`, path deps on `../viSHual/engine`, `Kind::Graph`, `ai::App::Graph`). It has
+   `src/graph.rs`, path dep on `../viSHual/crates/viz_native` (the native viSHual app), `Kind::Graph`, `ai::App::Graph`). It has
    uncommitted changes to `Cargo.toml`, `src/graph.rs`, `src/main.rs` since commit `828d88a`.
    Do not overwrite or revert them. Check `git status`/`git diff` before editing `main.rs`.
 2. **Installed binary is stale.** `~/.local/bin/officecraft` predates session restore, the model default and

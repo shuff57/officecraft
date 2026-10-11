@@ -196,7 +196,7 @@ impl Tab {
             Tab::Grid(a) => a.session.documents().iter().any(|d| d.is_dirty()),
             Tab::Deck(a) => a.session.documents().iter().any(|d| d.is_dirty()),
             Tab::Pdf(a) => a.first_dirty().is_some(),
-            Tab::Graph(a) => a.changed,
+            Tab::Graph(a) => a.changed(),
         }
     }
 
@@ -1199,6 +1199,16 @@ impl eframe::App for Suite {
                 };
                 shot_tab = kind;
             }
+            // `OFFICECRAFT_SHOT_VISHUAL=chat,dark`: set up the Graph tab's sidebar and theme.
+            if *n == 5
+                && let Ok(spec) = std::env::var("OFFICECRAFT_SHOT_VISHUAL")
+            {
+                for e in self.entries.iter_mut() {
+                    if let Tab::Graph(g) = &mut e.tab {
+                        g.shot_options(&spec);
+                    }
+                }
+            }
             // `OFFICECRAFT_SHOT_EQUATION=1`: insert an equation on the front deck and edit it in place.
             if *n == 8 && std::env::var_os("OFFICECRAFT_SHOT_EQUATION").is_some() {
                 for e in self.entries.iter_mut() {
@@ -1454,12 +1464,20 @@ impl eframe::App for Suite {
             View::Home => self.home(ui),
             View::Tab(id) => {
                 let owner = self.ctx_owner;
+                let cfg = self.ai_cfg.clone();
                 if let Some(e) = self.entry_mut(id) {
                     // A tab clicked in this very frame has not had its fonts and visuals
                     // installed yet (`logic` does that at the start of the next frame): drawing it
                     // now would use another app's font families, which panics.
                     if owner == Some(e.kind) {
                         e.tab.ui(ui, frame);
+                        // viSHual's own chat box asks the suite's assistant: one AI key for all.
+                        if let Tab::Graph(g) = &mut e.tab {
+                            for prompt in g.take_prompts() {
+                                e.chat.open = true;
+                                e.chat.ask_text(prompt, ai_app(e.kind), &cfg, ui.ctx());
+                            }
+                        }
                     } else {
                         ui.ctx().request_repaint();
                     }
