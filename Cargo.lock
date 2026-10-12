@@ -8458,6 +8458,7 @@ dependencies = [
  "egui",
  "math_core",
  "math_playground",
+ "png 0.17.16",
  "rfd",
  "serde_json",
  "viz_types",

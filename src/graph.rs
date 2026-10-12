@@ -30,6 +30,7 @@ impl GraphApp {
                 "chat" => self.app.show_chat(),
                 "dark" => self.app.set_dark(true),
                 "seed" => self.app.seed_demo(),
+                "rows" => self.app.seed_rows(),
                 _ => {}
             }
         }
