@@ -40,13 +40,12 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
 - `qwen3:0.6b` invents command ids unless told them; use `qwen3-coder:30b` for real work.
 
 ## Warnings
-1. **A second Claude session is editing this same directory.** It added a Graph tab (viSHual engine,
-   `src/graph.rs`, path deps on `../abstract-math-playground`, `Kind::Graph`, `ai::App::Graph`). It has
-   uncommitted changes to `Cargo.toml`, `src/graph.rs`, `src/main.rs` since commit `828d88a`.
-   Do not overwrite or revert them. Check `git status`/`git diff` before editing `main.rs`.
-2. **Installed binary is stale.** `~/.local/bin/officecraft` predates session restore, the model default and
-   the Graph tab. It was deliberately not refreshed because the current tree contains the other session's
-   unfinished work. Reinstall once that session is done: `install -Dm755 target/release/officecraft ~/.local/bin/officecraft`.
+1. **The Graph tab is unhooked on this branch** (`unhook-graph`): `src/graph.rs`, the `math_playground`
+   path dep, `Kind::Graph` and `ai::App::Graph` are removed so the suite builds without the sibling
+   viSHual / abstract-math-playground repos. The graph work (viSHual embedded through `vishual-ui-egui`
+   and `vishual-mcp`) lives on local `main` and is not pushed.
+2. **Installed binary is stale.** `~/.local/bin/officecraft` predates session restore and the model default.
+   Reinstall after the next build: `install -Dm755 target/release/officecraft ~/.local/bin/officecraft`.
    A running window keeps the old binary; closing it loses unsaved work, so ask first.
 3. **Four sibling repos carry uncommitted patches** `context_changed()` (7 to 8 lines each) in
    `crates/ui-egui/src/lib.rs` of `~/wordcraft`, `~/gridcraft`, `~/deckcraft`, `~/pdfcraft`. The shell needs them;
@@ -60,7 +59,7 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
 ## Next, in rough order
 1. Look at it: launch, click through Docs/Sheets/Slides/PDF and Home, report visual bugs.
 2. Save the four `context_changed()` diffs into `patches/` so the siblings can be rebuilt.
-3. Reinstall the build once the Graph tab work lands; relaunch.
+3. Reinstall the build; relaunch.
 4. Exercise the assistant on Sheets/Slides/PDF; try `qwen3-coder:30b`.
 5. Per-file tab rename after Save As; wire prefs/recovery; then consider the assistant's history and streaming.
 6. Optional milestone: tear-off windows via egui viewports (spike first).

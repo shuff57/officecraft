@@ -1,4 +1,4 @@
-//! OfficeCraft: WordCraft, GridCraft, DeckCraft, PdfCraft and viSHual (graphing) as tabs in one
+//! OfficeCraft: WordCraft, GridCraft, DeckCraft and PdfCraft as tabs in one
 //! window.
 //!
 //! Each tab is the real app's UI struct, created the first time its tab is opened. Only the
@@ -8,7 +8,6 @@
 use eframe::egui;
 
 mod ai;
-mod graph;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -16,18 +15,16 @@ enum Kind {
     Grid,
     Deck,
     Pdf,
-    Graph,
 }
 
 impl Kind {
-    const ALL: [Kind; 5] = [Kind::Word, Kind::Grid, Kind::Deck, Kind::Pdf, Kind::Graph];
+    const ALL: [Kind; 4] = [Kind::Word, Kind::Grid, Kind::Deck, Kind::Pdf];
     fn label(self) -> &'static str {
         match self {
             Kind::Word => "Docs",
             Kind::Grid => "Sheets",
             Kind::Deck => "Slides",
             Kind::Pdf => "PDF",
-            Kind::Graph => "Graph",
         }
     }
 }
@@ -38,7 +35,6 @@ enum Tab {
     Grid(Box<gridcraft_ui_egui::SheetApp>),
     Deck(Box<deckcraft_ui_egui::SlideApp>),
     Pdf(Box<pdfcraft_ui_egui::PdfCraftApp>),
-    Graph(Box<graph::GraphApp>),
 }
 
 fn word_services() -> wordcraft_ui_egui::Services {
@@ -107,7 +103,6 @@ impl Tab {
             }
             Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deckcraft_engine::Session::new(), deck_services()))),
             Kind::Pdf => Tab::Pdf(Box::new(pdfcraft_ui_egui::PdfCraftApp::new())),
-            Kind::Graph => Tab::Graph(Box::new(graph::GraphApp::new())),
         }
     }
 
@@ -117,7 +112,6 @@ impl Tab {
             Tab::Grid(a) => a.logic(ctx),
             Tab::Deck(a) => a.logic(ctx),
             Tab::Pdf(a) => eframe::App::logic(a.as_mut(), ctx, frame),
-            Tab::Graph(a) => a.logic(ctx),
         }
     }
 
@@ -127,7 +121,6 @@ impl Tab {
             Tab::Grid(a) => a.raw_input_hook(raw),
             Tab::Deck(a) => a.raw_input_hook(raw),
             Tab::Pdf(a) => eframe::App::raw_input_hook(a.as_mut(), ctx, raw),
-            Tab::Graph(a) => a.raw_input_hook(raw),
         }
     }
 
@@ -137,7 +130,6 @@ impl Tab {
             Tab::Grid(a) => a.ui(ui),
             Tab::Deck(a) => a.ui(ui),
             Tab::Pdf(a) => eframe::App::ui(a.as_mut(), ui, frame),
-            Tab::Graph(a) => a.ui(ui),
         }
     }
 }
@@ -157,13 +149,12 @@ fn kind_for(path: &str) -> Option<Kind> {
         "xlsx" | "xlsm" | "csv" | "tsv" => Some(Kind::Grid),
         "pptx" | "potx" | "ppsx" | "deckcraft" => Some(Kind::Deck),
         "pdf" => Some(Kind::Pdf),
-        "vshl" | "vishual" => Some(Kind::Graph),
         _ => None,
     }
 }
 
 const OPEN_EXTS: &[&str] = &[
-    "docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "xlsx", "xlsm", "csv", "tsv", "pptx", "potx", "ppsx", "deckcraft", "pdf", "vshl", "vishual",
+    "docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "xlsx", "xlsm", "csv", "tsv", "pptx", "potx", "ppsx", "deckcraft", "pdf",
 ];
 const MAX_RECENT: usize = 12;
 
@@ -196,7 +187,6 @@ impl Tab {
             Tab::Grid(a) => a.session.documents().iter().any(|d| d.is_dirty()),
             Tab::Deck(a) => a.session.documents().iter().any(|d| d.is_dirty()),
             Tab::Pdf(a) => a.first_dirty().is_some(),
-            Tab::Graph(a) => a.changed,
         }
     }
 
@@ -208,7 +198,6 @@ impl Tab {
             Tab::Grid(a) => a.context_changed(),
             Tab::Deck(a) => a.context_changed(),
             Tab::Pdf(a) => a.context_changed(),
-            Tab::Graph(a) => a.context_changed(),
         }
     }
 
@@ -224,7 +213,6 @@ impl Tab {
                 a.open_path(path);
                 Ok(())
             }
-            Tab::Graph(a) => a.open_path(path),
         }
     }
 }
@@ -322,7 +310,6 @@ fn kind_color(kind: Option<Kind>) -> egui::Color32 {
         Some(Kind::Grid) => egui::Color32::from_rgb(31, 143, 92),
         Some(Kind::Deck) => egui::Color32::from_rgb(212, 98, 46),
         Some(Kind::Pdf) => egui::Color32::from_rgb(194, 59, 69),
-        Some(Kind::Graph) => egui::Color32::from_rgb(183, 121, 31),
         None => egui::Color32::GRAY,
     }
 }
@@ -417,7 +404,6 @@ fn kind_abbr(kind: Option<Kind>) -> &'static str {
         Some(Kind::Grid) => "Sh",
         Some(Kind::Deck) => "Sl",
         Some(Kind::Pdf) => "Pd",
-        Some(Kind::Graph) => "Gr",
         None => "?",
     }
 }
@@ -536,19 +522,6 @@ fn thumb(painter: &egui::Painter, kind: Option<Kind>, area: egui::Rect) {
             painter.rect_filled(slide, 3.0, paper);
             r(12.0, 22.0, 62.0, 7.0, c, 2.0, slide);
             r(12.0, 36.0, 40.0, 3.0, line, 1.0, slide);
-        }
-        Some(Kind::Graph) => {
-            let plot = egui::Rect::from_center_size(center, egui::vec2(100.0, 66.0));
-            painter.rect_filled(plot, 3.0, paper);
-            painter.hline(plot.x_range(), plot.center().y, egui::Stroke::new(1.0, line));
-            painter.vline(plot.center().x, plot.y_range(), egui::Stroke::new(1.0, line));
-            let pts: Vec<egui::Pos2> = (0..=24)
-                .map(|i| {
-                    let t = i as f32 / 24.0 * 2.0 - 1.0;
-                    egui::pos2(plot.center().x + t * 42.0, plot.center().y + 26.0 - t * t * 46.0)
-                })
-                .collect();
-            painter.add(egui::Shape::line(pts, egui::Stroke::new(2.5, c)));
         }
         None => {}
     }
@@ -920,7 +893,7 @@ impl Suite {
             }
 
             ui.add_space(18.0);
-            let starts = [(Kind::Word, "Document", "Docs"), (Kind::Grid, "Spreadsheet", "Sheets"), (Kind::Deck, "Presentation", "Slides"), (Kind::Pdf, "PDF tools", "PDF"), (Kind::Graph, "Graph", "Graphs")];
+            let starts = [(Kind::Word, "Document", "Docs"), (Kind::Grid, "Spreadsheet", "Sheets"), (Kind::Deck, "Presentation", "Slides"), (Kind::Pdf, "PDF tools", "PDF")];
             ui.spacing_mut().item_spacing.x = 12.0;
             ui.columns(5, |cols| {
                 for (col, (kind, label, sub)) in cols.iter_mut().zip(starts) {
@@ -954,7 +927,6 @@ impl Suite {
                             (Filter::Only(Kind::Grid), "Sheets"),
                             (Filter::Only(Kind::Deck), "Slides"),
                             (Filter::Only(Kind::Pdf), "PDF"),
-                            (Filter::Only(Kind::Graph), "Graphs"),
                         ] {
                             if pill(ui, want_filter == f, label).clicked() {
                                 want_filter = f;
@@ -1157,7 +1129,6 @@ impl ai::Host for TabHost<'_> {
                 let client = self.client.get_or_insert_with(|| a.attach_control(ctx));
                 Pending(client.send(method, params))
             }
-            Tab::Graph(a) => Done(a.control(method, params)),
         }
     }
 }
@@ -1168,7 +1139,6 @@ fn ai_app(kind: Kind) -> ai::App {
         Kind::Grid => ai::App::Sheets,
         Kind::Deck => ai::App::Slides,
         Kind::Pdf => ai::App::Pdf,
-        Kind::Graph => ai::App::Graph,
     }
 }
 

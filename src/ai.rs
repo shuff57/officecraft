@@ -57,7 +57,6 @@ pub enum App {
     Sheets,
     Slides,
     Pdf,
-    Graph,
 }
 
 impl App {
@@ -67,7 +66,6 @@ impl App {
             App::Sheets => "workbook",
             App::Slides => "presentation",
             App::Pdf => "PDF",
-            App::Graph => "graph",
         }
     }
 }
@@ -700,7 +698,6 @@ fn empty_state(ui: &mut egui::Ui, app: App, accent: egui::Color32, ink: egui::Co
         App::Slides => &[("Summarize this deck", true), ("Add a summary slide", true), ("Tighten the bullet points", true), ("Draft a 5-slide deck on…", false)],
         App::Sheets => &[("Explain what this sheet does", true), ("Add a totals row", true), ("Create a sample budget table", true), ("Chart the first column against…", false)],
         App::Pdf => &[("What is in this file?", true), ("How many pages does it have?", true)],
-        App::Graph => &[("Plot y = sin(x)", true), ("Add a slider for a", true), ("Plot the unit circle", true)],
     };
     for (text, send) in chips {
         let r = ui.add_sized(
@@ -919,11 +916,6 @@ fn system_prompt(app: App) -> String {
               insert_chart cover the rest, and execute_command runs any command by id."
         }
         App::Pdf => " This is a PDF editor; inspect_document reports the open file and view state. Find commands with list_commands and run them with run_command.",
-        App::Graph => {
-            " This is a graphing calculator: items are expressions such as y=x^2, points like (1,2), \
-              inequalities and r=... polar curves; a free letter becomes a slider. Commands are the \
-              engine's JSON commands (setExpr, addItem, setSlider, setView, ...). Find them with list_commands."
-        }
     };
     format!(
         "You are the assistant built into OfficeCraft, working inside the user's open {kind}. \

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
-description = "One tabbed window for WordCraft, GridCraft, DeckCraft, PdfCraft and viSHual graphs"
+description = "One tabbed window for WordCraft, GridCraft, DeckCraft, PdfCraft"
 
 [dependencies]
 wordcraft-doc = { path = "../wordcraft/crates/doc" }
@@ -19,8 +19,6 @@ pdfcraft-ui-egui = { path = "../pdfcraft/crates/ui-egui" }
 wordcraft-mcp = { path = "../wordcraft/crates/mcp" }
 deckcraft-mcp = { path = "../deckcraft/crates/mcp" }
 gridcraft-mcp = { path = "../gridcraft/crates/mcp" }
-# viSHual: the graphing engine (JSON command API, headless GPU renderer) behind the Graph tab.
-math_playground = { path = "../abstract-math-playground/math_playground" }
 math_core = { path = "../abstract-math-playground/math_core" }
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
 egui = "0.36"
