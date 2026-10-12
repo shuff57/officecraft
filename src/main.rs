@@ -153,6 +153,20 @@ enum View {
 }
 
 /// Which app opens a file, by extension.
+/// The Home empty-state line in the browser build.
+#[cfg(target_arch = "wasm32")]
+fn web_open_hint() -> &'static str {
+    if web::can_write_in_place() {
+        "Press Open file. Save writes back to the file you opened; files dropped on the page download a copy instead."
+    } else {
+        "Press Open file or drop a file on the page. Files stay in your browser; Save downloads a copy."
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn web_open_hint() -> &'static str {
+    ""
+}
+
 fn kind_for(path: &str) -> Option<Kind> {
     let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
@@ -1028,7 +1042,7 @@ impl Suite {
 
             if rows.is_empty() {
                 ui.add_space(24.0);
-                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { if cfg!(target_arch = "wasm32") { "Press Open file or drop a file on the page. Files stay in your browser; Save downloads a copy." } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
+                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { if cfg!(target_arch = "wasm32") { web_open_hint() } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
             } else if want_grid {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     let gap = 16.0;

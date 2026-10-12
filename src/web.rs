@@ -28,6 +28,9 @@ const VIDEO_EXTS: &[&str] = &["mp4", "webm", "mkv", "mov", "m4v"];
 const RECIPIENT_EXTS: &[&str] = &["csv", "tsv", "txt"];
 
 thread_local! {
+    /// Handles of files opened through the File System Access picker, by file name, so Save can
+    /// write back to the same file instead of downloading a copy.
+    static HANDLES: RefCell<std::collections::HashMap<String, wasm_bindgen::JsValue>> = RefCell::new(std::collections::HashMap::new());
     /// The page's egui context, so a file the browser finishes reading wakes the next frame.
     static CTX: RefCell<Option<egui::Context>> = const { RefCell::new(None) };
     /// True while any open document has unsaved work (what the `beforeunload` guard reads).
@@ -143,6 +146,10 @@ fn guard_unload() -> Result<(), String> {
 
 /// Asks the browser for files and queues each one's bytes in `inbox`.
 pub fn pick_files(exts: &'static [&'static str], inbox: Inbox) {
+    if can_write_in_place() {
+        pick_doc("Office files", exts, true, inbox);
+        return;
+    }
     wasm_bindgen_futures::spawn_local(async move {
         let Some(files) = rfd::AsyncFileDialog::new().add_filter("Office files", exts).pick_files().await else {
             return;
@@ -168,6 +175,122 @@ pub fn read_dropped(file: egui::DroppedFileHandle, name: String, inbox: Inbox, c
     });
 }
 
+type Js = wasm_bindgen::JsValue;
+
+fn js_err(e: Js) -> String {
+    format!("{e:?}")
+}
+
+/// Whether the browser offers the File System Access API (Chromium; needs a secure context such
+/// as https or localhost). Without it, Open goes through a plain file input and Save downloads.
+pub fn can_write_in_place() -> bool {
+    web_sys::window().is_some_and(|w| js_sys::Reflect::get(&w, &"showOpenFilePicker".into()).is_ok_and(|f| f.is_function()))
+}
+
+fn call(obj: &Js, method: &str, args: &[Js]) -> Result<Js, String> {
+    let f: js_sys::Function = js_sys::Reflect::get(obj, &method.into()).map_err(js_err)?.dyn_into().map_err(|_| format!("{method} is not a function"))?;
+    let list = js_sys::Array::new();
+    for a in args {
+        list.push(a);
+    }
+    f.apply(obj, &list).map_err(js_err)
+}
+
+async fn await_js(v: Js) -> Result<Js, String> {
+    wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(&v)).await.map_err(js_err)
+}
+
+fn set_prop(obj: &js_sys::Object, key: &str, value: &Js) -> Result<(), String> {
+    js_sys::Reflect::set(obj, &key.into(), value).map(|_| ()).map_err(js_err)
+}
+
+/// Shows the File System Access picker and returns each chosen file's name and bytes, keeping
+/// the handles so a later Save can write back. A cancelled picker returns an empty list.
+async fn pick_via_handles(description: &str, exts: &[&str], multiple: bool) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let accept = js_sys::Object::new();
+    for ext in exts {
+        let key: Js = mime_for(&format!("file.{ext}")).into();
+        let list = match js_sys::Reflect::get(&accept, &key) {
+            Ok(v) if v.is_instance_of::<js_sys::Array>() => v.unchecked_into::<js_sys::Array>(),
+            _ => {
+                let a = js_sys::Array::new();
+                js_sys::Reflect::set(&accept, &key, &a).map_err(js_err)?;
+                a
+            }
+        };
+        list.push(&Js::from_str(&format!(".{ext}")));
+    }
+    let kind = js_sys::Object::new();
+    set_prop(&kind, "description", &Js::from_str(description))?;
+    set_prop(&kind, "accept", &accept)?;
+    let opts = js_sys::Object::new();
+    set_prop(&opts, "multiple", &Js::from_bool(multiple))?;
+    set_prop(&opts, "types", &js_sys::Array::of1(&kind))?;
+    let handles = match await_js(call(&window, "showOpenFilePicker", &[opts.into()])?).await {
+        Ok(h) => h,
+        Err(e) if e.contains("AbortError") => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut out = Vec::new();
+    for handle in js_sys::Array::from(&handles).iter() {
+        let name = js_sys::Reflect::get(&handle, &"name".into()).ok().and_then(|n| n.as_string()).unwrap_or_default();
+        let file = await_js(call(&handle, "getFile", &[])?).await?;
+        let buf = await_js(call(&file, "arrayBuffer", &[])?).await?;
+        out.push((name.clone(), js_sys::Uint8Array::new(&buf).to_vec()));
+        HANDLES.with(|m| m.borrow_mut().insert(name, handle));
+    }
+    Ok(out)
+}
+
+/// Opens a document picker: the File System Access one where available (so Save can write back),
+/// otherwise the ordinary file input.
+fn pick_doc(description: &'static str, exts: &'static [&'static str], multiple: bool, inbox: Inbox) {
+    if !can_write_in_place() {
+        let dialog = rfd::AsyncFileDialog::new().add_filter(description, exts);
+        pick_into(dialog, inbox);
+        return;
+    }
+    wasm_bindgen_futures::spawn_local(async move {
+        match pick_via_handles(description, exts, multiple).await {
+            Ok(files) => {
+                inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(files);
+                repaint();
+            }
+            Err(e) => log::error!("file picker failed: {e}"),
+        }
+    });
+}
+
+/// Save: writes back to the file the user opened through the picker when its handle is held,
+/// otherwise (or if the write is refused) downloads a copy.
+fn save_file(path: &str, bytes: &[u8]) -> Result<(), String> {
+    let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let Some(handle) = HANDLES.with(|m| m.borrow().get(&name).cloned()) else {
+        return download(path, bytes);
+    };
+    let (path, bytes) = (path.to_string(), bytes.to_vec());
+    wasm_bindgen_futures::spawn_local(async move {
+        match write_handle(&handle, &bytes).await {
+            Ok(()) => log::info!("saved {name} in place"),
+            Err(e) => {
+                log::warn!("couldn't write {name} in place ({e}); downloading a copy");
+                if let Err(e) = download(&path, &bytes) {
+                    log::error!("download of {path} failed: {e}");
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+async fn write_handle(handle: &Js, bytes: &[u8]) -> Result<(), String> {
+    let writable = await_js(call(handle, "createWritable", &[])?).await?;
+    await_js(call(&writable, "write", &[js_sys::Uint8Array::from(bytes).into()])?).await?;
+    await_js(call(&writable, "close", &[])?).await?;
+    Ok(())
+}
+
 /// Starts an asynchronous pick with `dialog` and queues the file's bytes in `inbox`.
 fn pick_into(dialog: rfd::AsyncFileDialog, inbox: Inbox) {
     wasm_bindgen_futures::spawn_local(async move {
@@ -185,16 +308,15 @@ pub fn word_services() -> wordcraft_ui_egui::Services {
     let open_inbox = inbox.clone();
     wordcraft_ui_egui::Services {
         open_async: Some(Box::new(move |purpose: &str| {
-            let dialog = match purpose {
-                "picture" => rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS),
-                "recipients" => rfd::AsyncFileDialog::new().add_filter("Recipient lists", RECIPIENT_EXTS),
-                _ => rfd::AsyncFileDialog::new().add_filter("Documents", DOC_EXTS),
-            };
-            pick_into(dialog, open_inbox.clone());
+            match purpose {
+                "picture" => pick_into(rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS), open_inbox.clone()),
+                "recipients" => pick_into(rfd::AsyncFileDialog::new().add_filter("Recipient lists", RECIPIENT_EXTS), open_inbox.clone()),
+                _ => pick_doc("Documents", DOC_EXTS, false, open_inbox.clone()),
+            }
         })),
         // Exports ask for a name; the browser decides where the download goes.
         pick_save: Some(Box::new(|name: &str| Some(name.to_string()))),
-        download: Some(Box::new(download)),
+        download: Some(Box::new(save_file)),
         print: Some(Box::new(print_pdf)),
         inbox: Some(inbox),
         ..Default::default()
@@ -207,14 +329,14 @@ pub fn grid_services() -> gridcraft_ui_egui::Services {
     gridcraft_ui_egui::Services {
         copy_html: Some(Box::new(copy_html)),
         open_async: Some(Box::new(move || {
-            pick_into(rfd::AsyncFileDialog::new().add_filter("Spreadsheets", SHEET_EXTS), open_inbox.clone());
+            pick_doc("Spreadsheets", SHEET_EXTS, false, open_inbox.clone());
         })),
         pick_picture_async: Some(Box::new(|inbox| {
             pick_into(rfd::AsyncFileDialog::new().add_filter("Pictures (PNG, JPEG)", &["png", "jpg", "jpeg"]), inbox);
         })),
         download: Some(Box::new(|name: &str, bytes: &[u8]| {
-            if let Err(e) = download(name, bytes) {
-                log::error!("download of {name} failed: {e}");
+            if let Err(e) = save_file(name, bytes) {
+                log::error!("save of {name} failed: {e}");
             }
         })),
         print: Some(Box::new(|bytes: &[u8]| {
@@ -237,18 +359,17 @@ pub fn deck_services() -> deckcraft_ui_egui::Services {
     let open_inbox = inbox.clone();
     deckcraft_ui_egui::Services {
         open_async: Some(Box::new(move |purpose: &str| {
-            let dialog = match purpose {
-                "picture" => rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS),
-                "audio" => rfd::AsyncFileDialog::new().add_filter("Audio", AUDIO_EXTS),
-                "video" => rfd::AsyncFileDialog::new().add_filter("Video", VIDEO_EXTS),
-                _ => rfd::AsyncFileDialog::new().add_filter("Presentations", PRESENTATION_EXTS),
-            };
-            pick_into(dialog, open_inbox.clone());
+            match purpose {
+                "picture" => pick_into(rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS), open_inbox.clone()),
+                "audio" => pick_into(rfd::AsyncFileDialog::new().add_filter("Audio", AUDIO_EXTS), open_inbox.clone()),
+                "video" => pick_into(rfd::AsyncFileDialog::new().add_filter("Video", VIDEO_EXTS), open_inbox.clone()),
+                _ => pick_doc("Presentations", PRESENTATION_EXTS, false, open_inbox.clone()),
+            }
         })),
-        write: Some(Box::new(|name: &str, bytes: &[u8]| download(name, bytes))),
+        write: Some(Box::new(|name: &str, bytes: &[u8]| save_file(name, bytes))),
         download: Some(Box::new(|name: &str, bytes: &[u8]| {
-            if let Err(e) = download(name, bytes) {
-                log::error!("download of {name} failed: {e}");
+            if let Err(e) = save_file(name, bytes) {
+                log::error!("save of {name} failed: {e}");
             }
         })),
         inbox: Some(inbox),
