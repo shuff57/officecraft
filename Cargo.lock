@@ -8457,12 +8457,17 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "equashion-egui 0.1.0",
+ "instant",
+ "js-sys",
  "math_core",
  "math_playground",
  "png 0.17.16",
  "serde_json",
  "viz_types",
  "viz_ui",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
