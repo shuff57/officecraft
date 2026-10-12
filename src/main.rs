@@ -8,6 +8,7 @@
 use eframe::egui;
 
 mod ai;
+mod updater;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -584,6 +585,7 @@ struct Suite {
     confirm_close: Option<u64>,
     ai_cfg: ai::Config,
     ai_settings: Option<ai::Settings>,
+    updater: updater::Updater,
     /// Which app last installed its fonts and visuals into the one shared egui context.
     ctx_owner: Option<Kind>,
     /// `OFFICECRAFT_SELFTEST=1`: cycle through every app tab and Home, then exit 0.
@@ -623,7 +625,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new() };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new() };
         suite.recount();
         suite
     }
@@ -1334,6 +1336,9 @@ impl eframe::App for Suite {
                     if ui.button("⚙").on_hover_text("Assistant settings: provider, endpoint, API keys").clicked() {
                         open_settings = true;
                     }
+                    if ui.button("⟳").on_hover_text("Updates: rebuild against the newest app commits").clicked() {
+                        self.updater.open = !self.updater.open;
+                    }
                     if let View::Tab(id) = self.view {
                         let open = self.entries.iter().find(|e| e.id == id).is_some_and(|e| e.chat.open);
                         if ui.selectable_label(open, "✨ Assistant").clicked() {
@@ -1354,6 +1359,10 @@ impl eframe::App for Suite {
                 ai::refresh_models();
             }
             self.ai_settings = None;
+        }
+        if self.updater.ui(ui.ctx()) {
+            updater::spawn_new_instance();
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if let Some(id) = toggle_chat
             && let Some(e) = self.entry_mut(id)

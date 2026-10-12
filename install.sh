@@ -16,9 +16,20 @@ if [ "${1:-}" = "--local" ]; then
   cargo update -q
 fi
 
+# Extra cargo config (the updater's [patch] file that points apps at the repos you follow).
+cargo_args=()
+if [ -n "${OFFICECRAFT_CARGO_CONFIG:-}" ]; then
+  cargo_args=(--config "$OFFICECRAFT_CARGO_CONFIG")
+  [ "${1:-}" = "--local" ] || {
+    cp Cargo.lock "${TMPDIR:-/tmp}/officecraft-Cargo.lock.bak"
+    trap 'cp "${TMPDIR:-/tmp}/officecraft-Cargo.lock.bak" Cargo.lock' EXIT
+    cargo update -q "${cargo_args[@]}"
+  }
+fi
+
 # The Craft apps bundle their UI fonts from a directory; honour an existing setting.
 export CRAFT_FONTS_DIR="${CRAFT_FONTS_DIR:-$HOME/craft-fonts}"
-cargo build --release
+cargo build --release "${cargo_args[@]}"
 
 install -Dm755 target/release/officecraft "$prefix/bin/officecraft"
 install -Dm644 packaging/ai.storyteller.officecraft.desktop \
@@ -29,4 +40,6 @@ for size in 64 128 256 512; do
 done
 command -v update-desktop-database >/dev/null && update-desktop-database "$prefix/share/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$prefix/share/icons/hicolor" || true
+mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/officecraft"
+printf 'SOURCE_DIR=%q\nPREFIX=%q\n' "$PWD" "$prefix" > "${XDG_DATA_HOME:-$HOME/.local/share}/officecraft/install.env"
 echo "Installed to $prefix (binary: $prefix/bin/officecraft)"
