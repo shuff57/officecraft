@@ -8,7 +8,6 @@
 use eframe::egui;
 
 mod ai;
-mod graph;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -38,7 +37,33 @@ enum Tab {
     Grid(Box<gridcraft_ui_egui::SheetApp>),
     Deck(Box<deckcraft_ui_egui::SlideApp>),
     Pdf(Box<pdfcraft_ui_egui::PdfCraftApp>),
-    Graph(Box<graph::GraphApp>),
+    Graph(Box<vishual_ui_egui::VishualApp>),
+}
+
+/// File dialogs for the Graph tab and where its gallery is kept (`<config>/officecraft/`).
+fn graph_services() -> vishual_ui_egui::Services {
+    let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .map(|d| d.join("officecraft"));
+    vishual_ui_egui::Services {
+        pick_open: Some(Box::new(|_purpose: &str| rfd::FileDialog::new().add_filter("viSHual", &["json", "vshl"]).pick_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
+        gallery_store: dir.map(|d| d.join("vishual-gallery.json")),
+    }
+}
+
+/// Screenshot hook: `OFFICECRAFT_SHOT_VISHUAL=chat,dark,seed,rows`.
+fn graph_shot_options(g: &mut vishual_ui_egui::VishualApp, spec: &str) {
+    for part in spec.split(',') {
+        match part.trim() {
+            "chat" => g.show_chat(),
+            "dark" => g.set_dark(true),
+            "seed" => g.seed_demo(),
+            "rows" => g.seed_rows(),
+            _ => {}
+        }
+    }
 }
 
 fn word_services() -> wordcraft_ui_egui::Services {
@@ -107,7 +132,7 @@ impl Tab {
             }
             Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deckcraft_engine::Session::new(), deck_services()))),
             Kind::Pdf => Tab::Pdf(Box::new(pdfcraft_ui_egui::PdfCraftApp::new())),
-            Kind::Graph => Tab::Graph(Box::new(graph::GraphApp::new())),
+            Kind::Graph => Tab::Graph(Box::new(vishual_ui_egui::VishualApp::new(graph_services()))),
         }
     }
 
@@ -117,7 +142,7 @@ impl Tab {
             Tab::Grid(a) => a.logic(ctx),
             Tab::Deck(a) => a.logic(ctx),
             Tab::Pdf(a) => eframe::App::logic(a.as_mut(), ctx, frame),
-            Tab::Graph(a) => a.logic(ctx),
+            Tab::Graph(_) => {}
         }
     }
 
@@ -127,7 +152,7 @@ impl Tab {
             Tab::Grid(a) => a.raw_input_hook(raw),
             Tab::Deck(a) => a.raw_input_hook(raw),
             Tab::Pdf(a) => eframe::App::raw_input_hook(a.as_mut(), ctx, raw),
-            Tab::Graph(a) => a.raw_input_hook(raw),
+            Tab::Graph(_) => {}
         }
     }
 
@@ -196,7 +221,7 @@ impl Tab {
             Tab::Grid(a) => a.session.documents().iter().any(|d| d.is_dirty()),
             Tab::Deck(a) => a.session.documents().iter().any(|d| d.is_dirty()),
             Tab::Pdf(a) => a.first_dirty().is_some(),
-            Tab::Graph(a) => a.changed(),
+            Tab::Graph(a) => a.changed,
         }
     }
 
@@ -1205,7 +1230,7 @@ impl eframe::App for Suite {
             {
                 for e in self.entries.iter_mut() {
                     if let Tab::Graph(g) = &mut e.tab {
-                        g.shot_options(&spec);
+                        graph_shot_options(g, &spec);
                     }
                 }
             }
@@ -1473,9 +1498,10 @@ impl eframe::App for Suite {
                         e.tab.ui(ui, frame);
                         // viSHual's own chat box asks the suite's assistant: one AI key for all.
                         if let Tab::Graph(g) = &mut e.tab {
-                            for prompt in g.take_prompts() {
+                            for r in g.take_requests() {
+                                let vishual_ui_egui::Request::Generate(prompt) = r;
                                 e.chat.open = true;
-                                e.chat.ask_text(prompt, ai_app(e.kind), &cfg, ui.ctx());
+                                e.chat.ask_text(vishual_mcp::generate_prompt(&prompt), ai_app(e.kind), &cfg, ui.ctx());
                             }
                         }
                     } else {

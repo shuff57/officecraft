@@ -921,9 +921,9 @@ fn system_prompt(app: App) -> String {
         App::Pdf => " This is a PDF editor; inspect_document reports the open file and view state. Find commands with list_commands and run them with run_command.",
         App::Graph => {
             " This is a graphing calculator: items are expressions such as y=x^2, points like (1,2), \
-              inequalities and r=... polar curves; a free letter becomes a slider. Commands are the \
-              engine's JSON commands (setExpr, addItem, setSlider, setView, ...). Find them with list_commands. \
-              newGraph clears the workspace and sendToGallery files it as a gallery card."
+              inequalities and r=... polar curves; a free letter becomes a slider. Look with inspect_graph; \
+              add_expressions adds several items, set_mode switches 1D/2D/3D and run_command runs any engine \
+              command (see list_commands). start_graph clears the workspace and file_in_gallery files it as a card."
         }
     };
     format!(
@@ -959,6 +959,7 @@ fn mcp_definitions(app: App) -> Option<Vec<Value>> {
         },
         App::Slides => deckcraft_mcp::tool_definitions(),
         App::Sheets => gridcraft_mcp::tool_definitions(),
+        App::Graph => vishual_mcp::tool_definitions(),
         _ => return None,
     };
     let mut out: Vec<Value> = defs
@@ -1145,6 +1146,12 @@ impl deckcraft_mcp::Backend for Bridge<'_> {
     }
 }
 
+impl vishual_mcp::Backend for Bridge<'_> {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        Bridge::call(self, method, params)
+    }
+}
+
 impl gridcraft_mcp::Backend for Bridge<'_> {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         Bridge::call(self, method, params)
@@ -1232,6 +1239,10 @@ fn run_tool(host: &mut dyn Host, app: App, name: &str, args: &Value) -> CallResu
             }
             App::Slides => {
                 let r = deckcraft_mcp::call_tool(&mut b, name, args);
+                mcp_text(&r.content, r.is_error)
+            }
+            App::Graph => {
+                let r = vishual_mcp::call_tool(&mut b, name, args);
                 mcp_text(&r.content, r.is_error)
             }
             _ => {

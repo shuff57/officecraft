@@ -5203,7 +5203,8 @@ dependencies = [
  "rfd",
  "serde_json",
  "ureq",
- "viz_native",
+ "vishual-mcp",
+ "vishual-ui-egui",
  "wordcraft-doc",
  "wordcraft-engine",
  "wordcraft-mcp",
@@ -8444,6 +8445,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vishual-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "vishual-ui-egui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "equashion-egui 0.1.0",
+ "math_core",
+ "math_playground",
+ "png 0.17.16",
+ "serde_json",
+ "viz_types",
+ "viz_ui",
+]
+
+[[package]]
 name = "viz_gen"
 version = "0.1.0"
 dependencies = [
@@ -8460,21 +8482,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-time 1.1.0",
-]
-
-[[package]]
-name = "viz_native"
-version = "0.1.0"
-dependencies = [
- "egui",
- "equashion-egui 0.1.0",
- "math_core",
- "math_playground",
- "png 0.17.16",
- "rfd",
- "serde_json",
- "viz_types",
- "viz_ui",
 ]
 
 [[package]]
