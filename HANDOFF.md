@@ -27,7 +27,9 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
   Set `XDG_CONFIG_HOME` to a temp dir when testing so your real session/recents aren't touched.
 - **Assistant config:** defaults to `http://127.0.0.1:11434/v1` (local Ollama), model `qwen3:0.6b`
   (small and fast on purpose, "will upgrade later"). Override with env `OFFICECRAFT_AI_URL` / `OFFICECRAFT_AI_MODEL`
-  or `~/.config/officecraft/ai.json` `{base_url, model}`. Key, if any: env `OFFICECRAFT_AI_KEY`. Never written to disk.
+  or the ⚙ Settings window in the tab bar (provider: local endpoint, Ollama Cloud, OpenRouter). Settings go to
+  `~/.config/officecraft/ai.json`; API keys go to `~/.config/officecraft/ai-keys.json` (mode 0600), never ai.json.
+  Env `OFFICECRAFT_AI_URL` / `_MODEL` / `_KEY` still override everything.
 
 ## Not verified / known gaps
 - **No visual check.** Every run was headless or log-only. Layout, Enter-to-send, scrolling, close prompt,

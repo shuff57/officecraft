@@ -3,7 +3,7 @@
 //!
 //! The model is any OpenAI-compatible chat endpoint. Settings come from
 //! `~/.config/officecraft/ai.json` (`base_url`, `model`); a key, if the endpoint wants one, is
-//! read from `OFFICECRAFT_AI_KEY` and never written anywhere.
+//! read from Settings (kept in an owner-only `ai-keys.json`) or `OFFICECRAFT_AI_KEY`.
 
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
@@ -17,26 +17,276 @@ const DEFAULT_BASE: &str = "http://127.0.0.1:11434/v1";
 // OFFICECRAFT_AI_MODEL (qwen3-coder:30b is far better at multi-step edits).
 const DEFAULT_MODEL: &str = "qwen3-coder:30b";
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Provider {
+    Local,
+    Cloud,
+    OpenRouter,
+}
+
+impl Provider {
+    pub const ALL: [Provider; 3] = [Provider::Local, Provider::Cloud, Provider::OpenRouter];
+    fn index(self) -> usize {
+        self as usize
+    }
+    fn id(self) -> &'static str {
+        match self {
+            Provider::Local => "local",
+            Provider::Cloud => "cloud",
+            Provider::OpenRouter => "openrouter",
+        }
+    }
+    fn from_id(s: &str) -> Option<Provider> {
+        Provider::ALL.into_iter().find(|p| p.id() == s)
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            Provider::Local => "Local endpoint",
+            Provider::Cloud => "Ollama Cloud",
+            Provider::OpenRouter => "OpenRouter",
+        }
+    }
+    fn default_base(self) -> &'static str {
+        match self {
+            Provider::Local => DEFAULT_BASE,
+            Provider::Cloud => "https://ollama.com/v1",
+            Provider::OpenRouter => "https://openrouter.ai/api/v1",
+        }
+    }
+    fn default_model(self) -> &'static str {
+        match self {
+            Provider::Local => DEFAULT_MODEL,
+            Provider::Cloud => "gpt-oss:120b",
+            Provider::OpenRouter => "openai/gpt-oss-120b",
+        }
+    }
+}
+
+/// Where the assistant talks to. `base_url`, `model` and `key` are the ones in use right now (the
+/// active provider's, or an `OFFICECRAFT_AI_*` environment override); the rest is what Settings edits.
 #[derive(Clone)]
 pub struct Config {
     pub base_url: String,
     pub model: String,
     key: Option<String>,
+    pub provider: Provider,
+    /// The endpoint of the local server (Ollama, LM Studio, llama.cpp, vLLM: anything OpenAI-compatible).
+    pub local_url: String,
+    /// The chosen model for each provider, in `Provider::ALL` order; empty = that provider's default.
+    models: [String; 3],
+    /// API keys for Ollama Cloud and OpenRouter (`keys[provider.index()]`; the local slot is unused).
+    keys: [String; 3],
+}
+
+fn config_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
+        .map(|c| c.join("officecraft"))
+}
+
+fn read_json(name: &str) -> Value {
+    config_dir()
+        .map(|d| d.join(name))
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(Value::Null)
 }
 
 impl Config {
     pub fn load() -> Config {
-        let file = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("officecraft").join("ai.json"));
-        let json: Value = file.and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-        let get = |k: &str, d: &str| json.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(d).to_string();
-        Config {
-            base_url: std::env::var("OFFICECRAFT_AI_URL").unwrap_or_else(|_| get("base_url", DEFAULT_BASE)).trim_end_matches('/').to_string(),
-            model: std::env::var("OFFICECRAFT_AI_MODEL").unwrap_or_else(|_| get("model", DEFAULT_MODEL)),
-            key: std::env::var("OFFICECRAFT_AI_KEY").ok().filter(|k| !k.is_empty()),
+        let json = read_json("ai.json");
+        let keys_json = read_json("ai-keys.json");
+        let get = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let mut c = Config {
+            base_url: String::new(),
+            model: String::new(),
+            key: None,
+            provider: Provider::from_id(&get(&json, "provider")).unwrap_or(Provider::Local),
+            local_url: get(&json, "base_url"),
+            models: [get(&json, "model"), get(&json, "cloud_model"), get(&json, "openrouter_model")],
+            keys: [String::new(), get(&keys_json, "cloud"), get(&keys_json, "openrouter")],
+        };
+        c.apply();
+        c
+    }
+
+    /// Recomputes the values in use from the settings and the environment overrides.
+    pub fn apply(&mut self) {
+        let p = self.provider;
+        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let base = match p {
+            Provider::Local if !self.local_url.is_empty() => self.local_url.clone(),
+            _ => p.default_base().to_string(),
+        };
+        self.base_url = env("OFFICECRAFT_AI_URL").unwrap_or(base).trim_end_matches('/').to_string();
+        let model = &self.models[p.index()];
+        self.model = env("OFFICECRAFT_AI_MODEL").unwrap_or_else(|| if model.is_empty() { p.default_model().to_string() } else { model.clone() });
+        let key = &self.keys[p.index()];
+        self.key = env("OFFICECRAFT_AI_KEY").or_else(|| (!key.is_empty()).then(|| key.clone()));
+    }
+
+    pub fn set_model(&mut self, model: &str) {
+        self.models[self.provider.index()] = model.to_string();
+        self.apply();
+    }
+
+    /// True when an `OFFICECRAFT_AI_*` variable overrides what Settings says.
+    pub fn env_override() -> bool {
+        ["OFFICECRAFT_AI_URL", "OFFICECRAFT_AI_MODEL", "OFFICECRAFT_AI_KEY"].iter().any(|k| std::env::var(k).is_ok_and(|v| !v.is_empty()))
+    }
+
+    /// Writes `ai.json` (provider, endpoint, models) and, separately, `ai-keys.json` (owner-only).
+    pub fn save(&self) -> Result<(), String> {
+        let dir = config_dir().ok_or("no config directory")?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let settings = json!({
+            "provider": self.provider.id(),
+            "base_url": self.local_url,
+            "model": self.models[0],
+            "cloud_model": self.models[1],
+            "openrouter_model": self.models[2],
+        });
+        std::fs::write(dir.join("ai.json"), serde_json::to_string_pretty(&settings).unwrap_or_default()).map_err(|e| e.to_string())?;
+        let keys = json!({"cloud": self.keys[1], "openrouter": self.keys[2]});
+        let path = dir.join("ai-keys.json");
+        write_private(&path, &serde_json::to_string_pretty(&keys).unwrap_or_default()).map_err(|e| e.to_string())
+    }
+}
+
+/// Writes a file only the owner can read (keys). The mode is set before the secret goes in.
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+        // an older file keeps its old mode through `mode()`: tighten it too
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        f.write_all(text.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        let mut f = std::fs::File::create(path)?;
+        f.write_all(text.as_bytes())
+    }
+}
+
+/// The Settings window's working copy; `ui` returns the config when the user saves.
+pub struct Settings {
+    draft: Config,
+    reveal: bool,
+    saved_note: String,
+    test: std::sync::Arc<std::sync::Mutex<Option<Result<usize, String>>>>,
+}
+
+impl Settings {
+    pub fn new(cfg: &Config) -> Settings {
+        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default() }
+    }
+
+    /// `Some(Some(cfg))`: saved; `Some(None)`: closed without saving; `None`: still open.
+    pub fn ui(&mut self, ctx: &egui::Context) -> Option<Option<Config>> {
+        let mut result = None;
+        let mut open = true;
+        egui::Window::new("Assistant settings").open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx, |ui| {
+            let d = &mut self.draft;
+            ui.label(egui::RichText::new("Provider").strong());
+            ui.horizontal(|ui| {
+                for p in Provider::ALL {
+                    if ui.selectable_label(d.provider == p, p.title()).clicked() {
+                        d.provider = p;
+                        *self.test.lock().unwrap() = None;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            let p = d.provider;
+            egui::Grid::new("ai_settings_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                match p {
+                    Provider::Local => {
+                        ui.label("Endpoint");
+                        ui.add(egui::TextEdit::singleline(&mut d.local_url).hint_text(DEFAULT_BASE).desired_width(300.0));
+                        ui.end_row();
+                    }
+                    _ => {
+                        ui.label("Endpoint");
+                        ui.label(egui::RichText::new(p.default_base()).monospace());
+                        ui.end_row();
+                        ui.label("API key");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(&mut d.keys[p.index()]).password(!self.reveal).hint_text("paste your key").desired_width(260.0));
+                            ui.checkbox(&mut self.reveal, "Show");
+                        });
+                        ui.end_row();
+                    }
+                }
+                ui.label("Model");
+                ui.add(egui::TextEdit::singleline(&mut d.models[p.index()]).hint_text(p.default_model()).desired_width(300.0));
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(match p {
+                    Provider::Local => "Any OpenAI-compatible server: Ollama (http://127.0.0.1:11434/v1), LM Studio (http://127.0.0.1:1234/v1), llama.cpp, vLLM.",
+                    Provider::Cloud => "Large hosted models. Your prompts and documents are sent to ollama.com.",
+                    Provider::OpenRouter => "Many hosted models. Your prompts and documents are sent to openrouter.ai and on to the lab running the model.",
+                })
+                .size(12.0)
+                .weak(),
+            );
+            if p != Provider::Local {
+                ui.label(egui::RichText::new("The key is kept in ~/.config/officecraft/ai-keys.json, readable only by you.").size(12.0).weak());
+            }
+            if Config::env_override() {
+                ui.colored_label(egui::Color32::from_rgb(180, 110, 0), "An OFFICECRAFT_AI_* environment variable overrides these settings.");
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Test connection").clicked() {
+                    let mut probe = self.draft.clone();
+                    probe.apply();
+                    *self.test.lock().unwrap() = None;
+                    let slot = self.test.clone();
+                    let ctx = ui.ctx().clone();
+                    std::thread::spawn(move || {
+                        let r = fetch_models(&probe, 8);
+                        *slot.lock().unwrap() = Some(r.map(|v| v.len()));
+                        ctx.request_repaint();
+                    });
+                }
+                match &*self.test.lock().unwrap() {
+                    Some(Ok(n)) => {
+                        ui.colored_label(egui::Color32::from_rgb(46, 125, 79), format!("Connected: {n} model{}", if *n == 1 { "" } else { "s" }));
+                    }
+                    Some(Err(e)) => {
+                        ui.colored_label(egui::Color32::from_rgb(194, 74, 47), e);
+                    }
+                    None => {}
+                }
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(egui::RichText::new("Save").strong()).clicked() {
+                    let mut cfg = self.draft.clone();
+                    cfg.apply();
+                    match cfg.save() {
+                        Ok(()) => result = Some(Some(cfg)),
+                        Err(e) => self.saved_note = format!("Could not save: {e}"),
+                    }
+                }
+                if ui.button("Cancel").clicked() {
+                    result = Some(None);
+                }
+                if !self.saved_note.is_empty() {
+                    ui.colored_label(egui::Color32::from_rgb(194, 74, 47), &self.saved_note);
+                }
+            });
+        });
+        if !open && result.is_none() {
+            result = Some(None);
         }
+        result
     }
 }
 
@@ -1376,11 +1626,40 @@ fn stream_inner(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std::sync
     Ok(msg)
 }
 
+/// `GET {base}/models` with the key, as a list of ids.
+fn fetch_models(cfg: &Config, timeout_secs: u64) -> Result<Vec<String>, String> {
+    let url = format!("{}/models", cfg.base_url);
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(timeout_secs))).http_status_as_error(false).build().into();
+    let mut req = agent.get(&url);
+    if let Some(k) = &cfg.key {
+        req = req.header("Authorization", &format!("Bearer {k}"));
+    }
+    let mut resp = req.call().map_err(|e| format!("Can't reach {url}: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    if !(200..300).contains(&status) {
+        let hint = if status == 401 || status == 403 { " (check the API key)" } else { "" };
+        return Err(format!("HTTP {status}{hint}"));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|_| "The endpoint did not return a model list".to_string())?;
+    let list = v.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
+    Ok(list.iter().filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string)).collect())
+}
+
+static MODELS: std::sync::OnceLock<std::sync::Mutex<(bool, Vec<String>)>> = std::sync::OnceLock::new();
+
+/// Forget the cached model list (the provider or endpoint changed); the next `models` refetches.
+pub fn refresh_models() {
+    if let Some(c) = MODELS.get()
+        && let Ok(mut g) = c.lock()
+    {
+        *g = (false, Vec::new());
+    }
+}
+
 /// The model ids the server offers (`GET /models`), fetched once in the background.
 pub fn models(cfg: &Config, ctx: &egui::Context) -> Vec<String> {
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<(bool, Vec<String>)>> = OnceLock::new();
-    let cell = CACHE.get_or_init(|| Mutex::new((false, Vec::new())));
+    let cell = MODELS.get_or_init(|| std::sync::Mutex::new((false, Vec::new())));
     let start = {
         let Ok(mut g) = cell.lock() else { return Vec::new() };
         let start = !g.0;
@@ -1391,21 +1670,8 @@ pub fn models(cfg: &Config, ctx: &egui::Context) -> Vec<String> {
         let cfg = cfg.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let url = format!("{}/models", cfg.base_url);
-            let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(8))).http_status_as_error(false).build().into();
-            let mut req = agent.get(&url);
-            if let Some(k) = &cfg.key {
-                req = req.header("Authorization", &format!("Bearer {k}"));
-            }
-            let ids: Vec<String> = req
-                .call()
-                .ok()
-                .and_then(|mut r| r.body_mut().read_to_string().ok())
-                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-                .and_then(|v| v.get("data").and_then(Value::as_array).cloned())
-                .map(|a| a.iter().filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string)).collect())
-                .unwrap_or_default();
-            if let Some(c) = CACHE.get()
+            let ids = fetch_models(&cfg, 8).unwrap_or_default();
+            if let Some(c) = MODELS.get()
                 && let Ok(mut g) = c.lock()
             {
                 g.1 = ids;
@@ -1414,25 +1680,6 @@ pub fn models(cfg: &Config, ctx: &egui::Context) -> Vec<String> {
         });
     }
     cell.lock().map(|g| g.1.clone()).unwrap_or_default()
-}
-
-/// Remembers the chosen model in `ai.json` (the key is never written).
-pub fn save_model(model: &str) {
-    let Some(path) = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-        .map(|c| c.join("officecraft").join("ai.json"))
-    else {
-        return;
-    };
-    let mut v: Value = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| json!({}));
-    if let Some(o) = v.as_object_mut() {
-        o.insert("model".into(), json!(model));
-    }
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(path, serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 /// Tool calls written as `<function=NAME><parameter=KEY>VALUE</parameter>...</function>` in the
@@ -1515,5 +1762,48 @@ mod tests {
         assert_eq!(describe("build_slides", &json!({"slides": [{}]})), "Added 1 slide");
         assert_eq!(describe("run_command", &json!({"command": "format.bold"})), "Ran Format bold");
         assert!(is_read_only("get_text", &json!({})) && !is_read_only("insert_blocks", &json!({})));
+    }
+
+    #[test]
+    fn settings_round_trip_and_keep_keys_in_their_own_private_file() {
+        let dir = std::env::temp_dir().join(format!("officecraft-ai-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // SAFETY: no other test reads the environment or the config directory.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &dir);
+            for k in ["OFFICECRAFT_AI_URL", "OFFICECRAFT_AI_MODEL", "OFFICECRAFT_AI_KEY"] {
+                std::env::remove_var(k);
+            }
+        }
+        let mut c = Config::load();
+        assert_eq!((c.provider, c.base_url.as_str(), c.model.as_str()), (Provider::Local, DEFAULT_BASE, DEFAULT_MODEL));
+        c.local_url = "http://127.0.0.1:1234/v1/".into();
+        c.keys[1] = "cloud-secret".into();
+        c.keys[2] = "router-secret".into();
+        c.provider = Provider::OpenRouter;
+        c.apply();
+        c.save().unwrap();
+        let settings = std::fs::read_to_string(dir.join("officecraft/ai.json")).unwrap();
+        assert!(!settings.contains("secret"), "a key leaked into ai.json");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("officecraft/ai-keys.json")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "keys file is readable by others");
+        }
+        let c = Config::load();
+        assert_eq!(c.provider, Provider::OpenRouter);
+        assert_eq!(c.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(c.model, "openai/gpt-oss-120b");
+        assert_eq!(c.key.as_deref(), Some("router-secret"));
+        let mut c = c;
+        c.provider = Provider::Local;
+        c.apply();
+        assert_eq!(c.base_url, "http://127.0.0.1:1234/v1");
+        assert_eq!(c.key, None);
+        c.provider = Provider::Cloud;
+        c.set_model("gpt-oss:20b");
+        assert_eq!((c.base_url.as_str(), c.model.as_str(), c.key.as_deref()), ("https://ollama.com/v1", "gpt-oss:20b", Some("cloud-secret")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

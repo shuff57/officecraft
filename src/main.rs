@@ -583,6 +583,7 @@ struct Suite {
     /// A tab with unsaved work whose close is waiting for confirmation.
     confirm_close: Option<u64>,
     ai_cfg: ai::Config,
+    ai_settings: Option<ai::Settings>,
     /// Which app last installed its fonts and visuals into the one shared egui context.
     ctx_owner: Option<Kind>,
     /// `OFFICECRAFT_SELFTEST=1`: cycle through every app tab and Home, then exit 0.
@@ -622,7 +623,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new() };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new() };
         suite.recount();
         suite
     }
@@ -1290,6 +1291,7 @@ impl eframe::App for Suite {
         let mut close: Option<u64> = None;
         let mut new: Option<Kind> = None;
         let mut toggle_chat: Option<u64> = None;
+        let mut open_settings = false;
         let bar_frame = if self.view == View::Home {
             egui::Frame::new().fill(egui::Color32::from_rgb(223, 229, 236)).inner_margin(egui::Margin::symmetric(8, 4))
         } else {
@@ -1328,16 +1330,31 @@ impl eframe::App for Suite {
                         }
                     }
                 });
-                if let View::Tab(id) = self.view {
-                    let open = self.entries.iter().find(|e| e.id == id).is_some_and(|e| e.chat.open);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("⚙").on_hover_text("Assistant settings: provider, endpoint, API keys").clicked() {
+                        open_settings = true;
+                    }
+                    if let View::Tab(id) = self.view {
+                        let open = self.entries.iter().find(|e| e.id == id).is_some_and(|e| e.chat.open);
                         if ui.selectable_label(open, "✨ Assistant").clicked() {
                             toggle_chat = Some(id);
                         }
-                    });
-                }
+                    }
+                });
             });
         });
+        if open_settings && self.ai_settings.is_none() {
+            self.ai_settings = Some(ai::Settings::new(&self.ai_cfg));
+        }
+        if let Some(st) = &mut self.ai_settings
+            && let Some(outcome) = st.ui(ui.ctx())
+        {
+            if let Some(cfg) = outcome {
+                self.ai_cfg = cfg;
+                ai::refresh_models();
+            }
+            self.ai_settings = None;
+        }
         if let Some(id) = toggle_chat
             && let Some(e) = self.entry_mut(id)
         {
@@ -1389,8 +1406,8 @@ impl eframe::App for Suite {
             match action {
                 Some(ai::Action::Send) => e.chat.send(app, &self.ai_cfg, ui.ctx()),
                 Some(ai::Action::SetModel(m)) => {
-                    ai::save_model(&m);
-                    self.ai_cfg.model = m;
+                    self.ai_cfg.set_model(&m);
+                    let _ = self.ai_cfg.save();
                 }
                 None => {}
             }
