@@ -1130,6 +1130,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-ui"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d#d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1808,7 +1816,6 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.36.2"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2592,8 +2599,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-calc"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2605,8 +2612,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-chart"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-core",
@@ -2617,8 +2624,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-core"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "js-sys",
  "serde",
@@ -2627,8 +2634,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-engine"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-chart",
@@ -2648,8 +2655,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-formula"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "serde",
@@ -2658,8 +2665,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-functions"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "regex",
@@ -2667,8 +2674,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-mcp"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-engine",
  "log",
@@ -2677,8 +2684,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-model"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2689,22 +2696,23 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-numfmt"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
 ]
 
 [[package]]
 name = "gridcraft-pdf"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 
 [[package]]
 name = "gridcraft-ui-egui"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
+ "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d)",
  "egui",
  "gridcraft-chart",
  "gridcraft-engine",
@@ -2721,8 +2729,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-xlsx"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "aes",
  "gridcraft-core",
@@ -2823,7 +2831,6 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -2853,7 +2860,6 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -2871,7 +2877,6 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -2895,7 +2900,6 @@ checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -3474,7 +3478,6 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "lopdf"
 version = "0.45.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
 dependencies = [
  "aes",
  "bitflags 2.13.2",
@@ -4233,8 +4236,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-a11y"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4245,8 +4248,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-annot"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
  "pdfcraft-fonts",
@@ -4256,8 +4259,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-audit"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4268,21 +4271,21 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-compare"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 
 [[package]]
 name = "pdfcraft-content"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
 ]
 
 [[package]]
 name = "pdfcraft-cos"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-crypt",
  "pdfcraft-filters",
@@ -4291,8 +4294,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-create"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "encoding_rs",
  "image",
@@ -4306,8 +4309,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-crypt"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "aes",
  "md-5",
@@ -4318,8 +4321,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-edit"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "kurbo 0.13.1",
  "pdfcraft-annot",
@@ -4333,8 +4336,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-engine"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "chrono",
  "icu_properties",
@@ -4371,16 +4374,16 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-export"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "flate2",
 ]
 
 [[package]]
 name = "pdfcraft-filters"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "flate2",
  "thiserror 2.0.21",
@@ -4388,8 +4391,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-fonts"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "harfrust 0.12.0",
  "pdfcraft-cos",
@@ -4399,8 +4402,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-forms"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4411,21 +4414,21 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-geom"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 
 [[package]]
 name = "pdfcraft-js"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "boa_engine",
 ]
 
 [[package]]
 name = "pdfcraft-measure"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-content",
@@ -4437,16 +4440,16 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-model"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
 ]
 
 [[package]]
 name = "pdfcraft-ocr"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "ocrs",
  "pdfcraft-fonts",
@@ -4456,8 +4459,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-optimize"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "image",
  "pdfcraft-annot",
@@ -4469,8 +4472,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-organize"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4479,8 +4482,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-platform"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "async-channel",
  "futures-lite",
@@ -4489,8 +4492,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-preflight"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
  "pdfcraft-model",
@@ -4498,8 +4501,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-print"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "craft-print",
  "pdfcraft-content",
@@ -4510,8 +4513,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-redact"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-content",
@@ -4525,8 +4528,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-render"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "bytemuck",
  "getrandom 0.4.3",
@@ -4543,8 +4546,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-sign"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -4578,13 +4581,13 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-ui-egui"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "arboard",
  "base64 0.22.1",
  "bytemuck",
- "craft-ui",
+ "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=5c874d51eeb3de70e735c8ce87a59a7dedd47675)",
  "eframe",
  "egui",
  "egui_extras",
@@ -4617,8 +4620,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-xfa"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4632,8 +4635,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-xfdf"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-cos",
@@ -7651,7 +7654,6 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
 dependencies = [
  "ahash",
  "android-activity",
@@ -8365,3 +8367,331 @@ dependencies = [
  "syn 3.0.8",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "gridcraft-calc"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-chart"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-core"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-engine"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-formula"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-functions"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-mcp"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-model"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-numfmt"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-pdf"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-ui-egui"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-xlsx"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "pdfcraft-a11y"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-annot"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-audit"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-automation"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-compare"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-content"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-cos"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-create"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-crypt"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-edit"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-engine"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-export"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-filters"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-fonts"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-forms"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-geom"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-js"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-measure"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-model"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-ocr"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-optimize"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-organize"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-platform"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-preflight"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-print"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-redact"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-render"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-sign"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-ui-egui"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-xfa"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-xfdf"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "deckcraft-anim"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-av1"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-bitstream"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-color"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-engine"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-fonts"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-format"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-geom"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-h264"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-hevc"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-isobmff"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-matroska"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-mcp"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-media"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-model"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-ogg"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-opus"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-pdf"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-pptx"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-render"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-text"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-ui-egui"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-vp9"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-control-key"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-doc"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-docbin"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-docx"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-engine"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-fonts"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-formats"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-geom"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-layout"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-mcp"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-metafile"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-pdf"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-proof"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-render"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-ui-egui"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-zotero"
+version = "0.5.0"

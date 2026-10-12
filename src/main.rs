@@ -1577,10 +1577,14 @@ fn main() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
+    // Window/taskbar icon; the installed copies under hicolor are what the desktop entry uses.
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon/hicolor/256x256/apps/ai.storyteller.officecraft.png"))
+        .expect("bundled app icon is a valid png");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("OfficeCraft")
             .with_app_id("ai.storyteller.officecraft")
+            .with_icon(icon)
             .with_inner_size([1440.0, 920.0])
             .with_min_inner_size([760.0, 480.0])
             .with_drag_and_drop(true),

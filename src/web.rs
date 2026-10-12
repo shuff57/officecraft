@@ -15,6 +15,9 @@ use crate::{Inbox, Suite};
 
 const CANVAS_ID: &str = "officecraft_canvas";
 const LOADING_ID: &str = "officecraft_loading";
+/// The loading animation in index.html runs a 7 s cycle; the app is revealed on a cycle boundary.
+const LOADER_CYCLE_MS: f64 = 7000.0;
+const LOADER_FADE_MS: i32 = 350;
 
 const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
 const SHEET_EXTS: &[&str] = &["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json"];
@@ -81,11 +84,40 @@ pub fn start() {
             .await;
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
-                Ok(()) => el.remove(),
+                Ok(()) => {
+                    finish_loader_cycle().await;
+                    el.remove();
+                }
                 Err(e) => el.set_inner_html(&format!("<p>OfficeCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
             }
         }
     });
+}
+
+/// Holds the loading screen until its animation reaches the end of the cycle it is in, then fades
+/// it out, so the icon always finishes a full pass before the app appears. Skipped when the
+/// visitor prefers reduced motion (the icon is then a still image).
+async fn finish_loader_cycle() {
+    let Some(window) = web_sys::window() else { return };
+    let reduced = window.match_media("(prefers-reduced-motion: reduce)").ok().flatten().is_some_and(|m| m.matches());
+    if reduced {
+        return;
+    }
+    // `performance.now()` shares its origin with the document timeline the CSS animation runs on.
+    let now = window.performance().map_or(0.0, |p| p.now());
+    let remaining = LOADER_CYCLE_MS - now % LOADER_CYCLE_MS;
+    sleep_ms(&window, remaining as i32).await;
+    if let Some(el) = window.document().and_then(|d| d.get_element_by_id(LOADING_ID)).and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()) {
+        let _ = el.style().set_property("opacity", "0");
+        sleep_ms(&window, LOADER_FADE_MS).await;
+    }
+}
+
+async fn sleep_ms(window: &web_sys::Window, ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms.max(0));
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
 fn query() -> String {
