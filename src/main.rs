@@ -157,14 +157,24 @@ enum View {
 #[cfg(target_arch = "wasm32")]
 fn web_open_hint() -> &'static str {
     if web::can_write_in_place() {
-        "Press Open file. Save writes back to the file you opened; files dropped on the page download a copy instead."
+        "Press Open file, or add a folder in the sidebar. Save writes back to the file you opened; files dropped on the page download a copy instead."
     } else {
-        "Press Open file or drop a file on the page. Files stay in your browser; Save downloads a copy."
+        "Press Open file, add a folder in the sidebar, or drop a file on the page. Files stay in your browser; Save downloads a copy."
     }
 }
 #[cfg(not(target_arch = "wasm32"))]
 fn web_open_hint() -> &'static str {
     ""
+}
+
+/// Whether the browser build can show the folder sidebar.
+#[cfg(target_arch = "wasm32")]
+fn web_can_browse() -> bool {
+    web::can_browse_folders()
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn web_can_browse() -> bool {
+    false
 }
 
 fn kind_for(path: &str) -> Option<Kind> {
@@ -302,6 +312,16 @@ enum Filter {
     Only(Kind),
 }
 
+/// A folder listing the browser delivered: a folder the visitor just added (`added`) or a
+/// fresh listing of one already in the sidebar.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+struct FolderScan {
+    key: String,
+    rows: Vec<Row>,
+    added: bool,
+}
+type FolderScans = std::sync::Arc<std::sync::Mutex<Vec<FolderScan>>>;
+
 /// One file in the Home table.
 #[derive(Clone)]
 struct Row {
@@ -353,12 +373,33 @@ fn list_folder(dir: &str) -> Vec<Row> {
     rows
 }
 
+/// Folders the visitor added. A page can't reopen a folder without a fresh pick, so the browser
+/// build starts with none and keeps them for the session only.
 fn load_folders() -> Vec<String> {
+    if cfg!(target_arch = "wasm32") {
+        return Vec::new();
+    }
     platform::read_lines("folders.txt")
 }
 
 fn save_folders(list: &[String]) {
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
     platform::write_lines("folders.txt", list);
+}
+
+/// The rows of folder `dir`: read from disk natively, the browser's last listing in a page.
+fn folder_listing(scans: &std::collections::HashMap<String, Vec<Row>>, dir: &str) -> Vec<Row> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        scans.get(dir).cloned().unwrap_or_default()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = scans;
+        list_folder(dir)
+    }
 }
 
 fn kind_color(kind: Option<Kind>) -> egui::Color32 {
@@ -417,6 +458,56 @@ fn bold() -> egui::FontFamily {
     } else {
         egui::FontFamily::Proportional
     }
+}
+
+/// The OfficeCraft mark (assets/officecraft-logo.svg) drawn with the painter, scaled from its 512-unit box to `rect`.
+fn paint_logo(painter: &egui::Painter, rect: egui::Rect) {
+    let k = rect.width() / 512.0;
+    let at = |x: f32, y: f32| rect.min + egui::vec2(x, y) * k;
+    let r = |x: f32, y: f32, w: f32, h: f32| egui::Rect::from_min_size(at(x, y), egui::vec2(w, h) * k);
+    let white = egui::Color32::WHITE;
+    let soft = egui::Color32::from_white_alpha(217);
+    painter.rect_filled(r(16.0, 16.0, 480.0, 480.0), 112.0 * k, egui::Color32::from_rgb(0x2d, 0x4f, 0x6e));
+    let tiles = [
+        (91.0, 91.0, egui::Color32::from_rgb(0x3f, 0x5f, 0xe0)),
+        (271.0, 91.0, egui::Color32::from_rgb(0xf0, 0x7a, 0x1e)),
+        (91.0, 271.0, egui::Color32::from_rgb(0x1f, 0x9d, 0x55)),
+        (271.0, 271.0, egui::Color32::from_rgb(0x12, 0xa5, 0x8a)),
+    ];
+    for (x, y, c) in tiles {
+        painter.rect_filled(r(x, y, 150.0, 150.0), 36.0 * k, c);
+    }
+    // Glyphs: (tile origin, x, y, w, h, radius, colour), in tile units.
+    let mut g: Vec<(f32, f32, f32, f32, f32, f32, f32, egui::Color32)> = Vec::new();
+    // Docs: text lines.
+    for (y, w, c) in [(34.0, 86.0, white), (56.0, 62.0, soft), (78.0, 74.0, soft), (100.0, 40.0, soft)] {
+        g.push((91.0, 91.0, 32.0, y, w, 10.0, 5.0, c));
+    }
+    // Slides: title bar and three bars.
+    g.push((271.0, 91.0, 34.0, 28.0, 50.0, 9.0, 4.5, white));
+    g.push((271.0, 91.0, 34.0, 76.0, 26.0, 36.0, 6.0, soft));
+    g.push((271.0, 91.0, 62.0, 50.0, 26.0, 62.0, 6.0, white));
+    g.push((271.0, 91.0, 90.0, 64.0, 26.0, 48.0, 6.0, soft));
+    // Sheets: 3x3 cells.
+    for row in 0..3 {
+        for col in 0..3 {
+            let c = if row == 0 { white } else { egui::Color32::from_white_alpha(178) };
+            g.push((91.0, 271.0, 32.0 + 32.0 * col as f32, 34.0 + 28.0 * row as f32, 26.0, 22.0, 5.0, c));
+        }
+    }
+    for (ox, oy, x, y, w, h, rad, c) in g {
+        painter.rect_filled(r(ox + x, oy + y, w, h), rad * k, c);
+    }
+    // PDF: page outline with a folded corner and two text lines.
+    let stroke = |w: f32, c: egui::Color32| egui::Stroke::new(w * k, c);
+    let p = |x: f32, y: f32| at(271.0 + x, 271.0 + y);
+    painter.add(egui::Shape::closed_line(
+        vec![p(46.0, 28.0), p(86.0, 28.0), p(106.0, 48.0), p(106.0, 122.0), p(46.0, 122.0)],
+        stroke(8.0, white),
+    ));
+    painter.add(egui::Shape::line(vec![p(86.0, 28.0), p(86.0, 48.0), p(106.0, 48.0)], stroke(8.0, white)));
+    painter.line_segment([p(60.0, 78.0), p(92.0, 78.0)], stroke(7.0, soft));
+    painter.line_segment([p(60.0, 96.0), p(80.0, 96.0)], stroke(7.0, soft));
 }
 
 fn b(text: &str, size: f32) -> egui::RichText {
@@ -579,7 +670,10 @@ fn thumb(painter: &egui::Painter, kind: Option<Kind>, area: egui::Rect) {
 }
 
 fn ago(t: std::time::SystemTime) -> String {
-    let secs = std::time::SystemTime::now().duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    // `SystemTime::now()` panics on wasm32; web_time's is std's natively and the browser's in a page.
+    let now = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let then = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = now.saturating_sub(then);
     match secs {
         0..=59 => "just now".to_string(),
         60..=3599 => format!("{} min ago", secs / 60),
@@ -648,6 +742,10 @@ struct Suite {
     shot_sent: bool,
     home_styled: bool,
     folder_counts: Vec<usize>,
+    /// Browser build: listings delivered by the folder picker, and the last one per folder.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    folder_scans: FolderScans,
+    scans: std::collections::HashMap<String, Vec<Row>>,
     /// Files the browser delivered (Open file, drag and drop), each opened in its own tab.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     inbox: Inbox,
@@ -675,13 +773,13 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None };
         suite.recount();
         suite
     }
 
     fn recount(&mut self) {
-        self.folder_counts = self.folders.iter().map(|f| list_folder(f).len()).collect();
+        self.folder_counts = self.folders.iter().map(|f| folder_listing(&self.scans, f).len()).collect();
     }
 
     /// Starts a fresh, empty instance of `kind` and shows it.
@@ -711,6 +809,13 @@ impl Suite {
 
     /// Opens `path` in its own tab, or switches to the tab that already has it.
     fn open_file(&mut self, ctx: &egui::Context, path: &str) {
+        // Browser build: a row of an added folder is read through its handle and arrives via the inbox.
+        #[cfg(target_arch = "wasm32")]
+        if web::is_folder_path(path) {
+            web::open_from_folder(path, self.inbox.clone());
+            ctx.request_repaint();
+            return;
+        }
         if let Some(e) = self.entries.iter().find(|e| e.path.as_deref() == Some(path)) {
             self.view = View::Tab(e.id);
             ctx.request_repaint();
@@ -878,14 +983,17 @@ impl Suite {
                 ui.add_space(20.0);
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
+                    let (logo, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
+                    paint_logo(ui.painter(), logo);
+                    ui.add_space(4.0);
                     ui.label(b("OfficeCraft", 17.0));
                 });
                 ui.add_space(12.0);
                 if side_row(ui, self.folder_sel.is_none(), false, "Recent", Some(self.recent.len()), false).0.clicked() {
                     select = Some(None);
                 }
-                // A page has no folders to browse; only files it was given.
-                let folders_ui = !cfg!(target_arch = "wasm32");
+                // A page can browse folders only where the browser offers a directory picker.
+                let folders_ui = !cfg!(target_arch = "wasm32") || web_can_browse();
                 if folders_ui {
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
@@ -1122,10 +1230,16 @@ impl Suite {
         self.filter = want_filter;
         if let Some(s) = select {
             self.folder_sel = s;
-            self.folder_rows = s.and_then(|i| self.folders.get(i)).map(|d| list_folder(d)).unwrap_or_default();
+            self.folder_rows = s.and_then(|i| self.folders.get(i)).map(|d| folder_listing(&self.scans, d)).unwrap_or_default();
+            // Files may have changed since the folder was added: list it again in the background.
+            #[cfg(target_arch = "wasm32")]
+            if let Some(d) = s.and_then(|i| self.folders.get(i)) {
+                web::rescan_folder(d, self.folder_scans.clone());
+            }
         }
         if let Some(i) = remove_folder {
-            self.folders.remove(i);
+            let gone = self.folders.remove(i);
+            self.scans.remove(&gone);
             save_folders(&self.folders);
             self.folder_sel = None;
             self.folder_rows.clear();
@@ -1141,7 +1255,7 @@ impl Suite {
             self.recount();
             let i = self.folders.iter().position(|f| *f == dir);
             self.folder_sel = i;
-            self.folder_rows = list_folder(&dir);
+            self.folder_rows = folder_listing(&self.scans, &dir);
         }
         #[cfg(not(target_arch = "wasm32"))]
         if pick_files && let Some(p) = rfd::FileDialog::new().add_filter("Office files", OPEN_EXTS).pick_files() {
@@ -1154,7 +1268,9 @@ impl Suite {
             web::pick_files(OPEN_EXTS, self.inbox.clone());
         }
         #[cfg(target_arch = "wasm32")]
-        let _ = add_folder;
+        if add_folder {
+            web::add_folder(self.folder_scans.clone());
+        }
         if let Some(k) = new {
             self.new_tab(k);
             ctx.request_repaint();
@@ -1339,6 +1455,26 @@ impl eframe::App for Suite {
             let arrived = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
             for (name, bytes) in arrived {
                 self.open_bytes(ctx, name, bytes);
+            }
+            let scanned = std::mem::take(&mut *self.folder_scans.lock().unwrap_or_else(|e| e.into_inner()));
+            for FolderScan { key, rows, added } in scanned {
+                let i = match self.folders.iter().position(|f| *f == key) {
+                    Some(i) => i,
+                    None => {
+                        self.folders.push(key.clone());
+                        self.folders.len() - 1
+                    }
+                };
+                self.folder_counts.resize(self.folders.len(), 0);
+                self.folder_counts[i] = rows.len();
+                if added {
+                    self.folder_sel = Some(i);
+                }
+                if self.folder_sel == Some(i) {
+                    self.folder_rows = rows.clone();
+                }
+                self.scans.insert(key, rows);
+                ctx.request_repaint();
             }
         }
         if self.restore_home && self.pending.is_empty() {

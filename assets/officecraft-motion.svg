@@ -10,11 +10,11 @@
     .pg   { stroke-dasharray: 100; stroke-dashoffset: 0; }
 
     @media (prefers-reduced-motion: no-preference) {
-      .float { animation: float 3.5s ease-in-out infinite; }
+      .float { animation: float 1.75s ease-in-out infinite; }
       .tile, .ln, .bar, .cell, .pg, .halo {
-        animation-duration: 7s;
+        animation-duration: 3.5s;
         animation-iteration-count: infinite;
-        animation-delay: calc(var(--d, 0s) - 7s);   /* offset inside the cycle, so the loop has no dead start */
+        animation-delay: calc((var(--d, 0s) - 7s) / 2);   /* offset inside the cycle (delays are authored on a 7 s timeline, played at 2x) */
         animation-fill-mode: both;
       }
       .tile { animation-name: tile; animation-timing-function: cubic-bezier(.3,.7,.3,1); }

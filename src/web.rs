@@ -15,8 +15,8 @@ use crate::{Inbox, Suite};
 
 const CANVAS_ID: &str = "officecraft_canvas";
 const LOADING_ID: &str = "officecraft_loading";
-/// The loading animation in index.html runs a 7 s cycle; the app is revealed on a cycle boundary.
-const LOADER_CYCLE_MS: f64 = 7000.0;
+/// The loading animation in index.html runs a 3.5 s cycle; the app is revealed on a cycle boundary.
+const LOADER_CYCLE_MS: f64 = 3500.0;
 const LOADER_FADE_MS: i32 = 350;
 
 const DOC_EXTS: &[&str] = &["docx", "docm", "dotx", "dotm", "doc", "dot", "odt", "rtf", "txt", "md", "html", "htm", "tex", "json"];
@@ -30,7 +30,13 @@ const RECIPIENT_EXTS: &[&str] = &["csv", "tsv", "txt"];
 thread_local! {
     /// Handles of files opened through the File System Access picker, by file name, so Save can
     /// write back to the same file instead of downloading a copy.
-    static HANDLES: RefCell<std::collections::HashMap<String, wasm_bindgen::JsValue>> = RefCell::new(std::collections::HashMap::new());
+    /// `None` marks a name opened from two different files: Save downloads rather than guess.
+    static HANDLES: RefCell<std::collections::HashMap<String, Option<wasm_bindgen::JsValue>>> = RefCell::new(std::collections::HashMap::new());
+    /// Folders the visitor added, by the key shown in the sidebar, as directory handles.
+    static DIRS: RefCell<std::collections::HashMap<String, wasm_bindgen::JsValue>> = RefCell::new(std::collections::HashMap::new());
+    /// Folders picked through a plain `<input webkitdirectory>` (browsers without the directory
+    /// picker, e.g. Brave): the `File`s of that moment's snapshot by relative path, read-only.
+    static DIRFILES: RefCell<std::collections::HashMap<String, std::collections::HashMap<String, wasm_bindgen::JsValue>>> = RefCell::new(std::collections::HashMap::new());
     /// The page's egui context, so a file the browser finishes reading wakes the next frame.
     static CTX: RefCell<Option<egui::Context>> = const { RefCell::new(None) };
     /// True while any open document has unsaved work (what the `beforeunload` guard reads).
@@ -238,9 +244,275 @@ async fn pick_via_handles(description: &str, exts: &[&str], multiple: bool) -> R
         let file = await_js(call(&handle, "getFile", &[])?).await?;
         let buf = await_js(call(&file, "arrayBuffer", &[])?).await?;
         out.push((name.clone(), js_sys::Uint8Array::new(&buf).to_vec()));
-        HANDLES.with(|m| m.borrow_mut().insert(name, handle));
+        remember_handle(name, handle).await;
     }
     Ok(out)
+}
+
+/// Records `handle` as the file Save should write back to for `name`. A name that now maps to two
+/// different files is marked ambiguous (Save downloads) so the wrong file is never overwritten.
+async fn remember_handle(name: String, handle: Js) {
+    let existing = HANDLES.with(|m| m.borrow().get(&name).cloned());
+    let value = match existing {
+        None => Some(handle),
+        Some(None) => None,
+        Some(Some(old)) => {
+            let same = match call(&old, "isSameEntry", &[handle.clone()]) {
+                Ok(p) => await_js(p).await.ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                Err(_) => false,
+            };
+            if same { Some(handle) } else { None }
+        }
+    };
+    HANDLES.with(|m| m.borrow_mut().insert(name, value));
+}
+
+/// Folder browsing works in every browser: live handles where `showDirectoryPicker` exists,
+/// otherwise a snapshot picked through a directory file input (Save then downloads a copy).
+pub fn can_browse_folders() -> bool {
+    web_sys::window().is_some()
+}
+
+fn has_directory_picker() -> bool {
+    web_sys::window().is_some_and(|w| js_sys::Reflect::get(&w, &"showDirectoryPicker".into()).is_ok_and(|f| f.is_function()))
+}
+
+const DIR_INPUT_ID: &str = "officecraft-dir-input";
+
+/// The fallback folder picker: a hidden `<input type=file webkitdirectory>`. Its `File`s are kept
+/// by relative path and listed like a scanned folder; picking the same folder again refreshes it.
+fn add_folder_from_input(scans: crate::FolderScans) -> Result<(), String> {
+    let document = web_sys::window().and_then(|w| w.document()).ok_or("no document")?;
+    if let Some(old) = document.get_element_by_id(DIR_INPUT_ID) {
+        old.remove();
+    }
+    let input = document.create_element("input").map_err(js_err)?;
+    input.set_id(DIR_INPUT_ID);
+    for (k, v) in [("type", "file"), ("webkitdirectory", ""), ("multiple", ""), ("style", "display:none")] {
+        input.set_attribute(k, v).map_err(js_err)?;
+    }
+    document.body().ok_or("no body")?.append_child(&input).map_err(js_err)?;
+    let target = input.clone();
+    let on_change = wasm_bindgen::closure::Closure::once_into_js(move || {
+        let files = js_sys::Reflect::get(&target, &"files".into()).unwrap_or(Js::UNDEFINED);
+        let count = prop_f64(&files, "length") as u32;
+        let mut root = String::new();
+        let mut by_rel = std::collections::HashMap::new();
+        let mut rows: Vec<crate::Row> = Vec::new();
+        for i in 0..count {
+            let Ok(file) = call(&files, "item", &[Js::from_f64(f64::from(i))]) else { continue };
+            let rel_path = prop_string(&file, "webkitRelativePath");
+            let parts: Vec<&str> = rel_path.split('/').collect();
+            // "Root/sub/file.ext": two folders below the root at most, nothing hidden or vendored.
+            if parts.len() < 2 || parts.len() > 4 || parts[1..].iter().any(|p| p.starts_with('.') || *p == "node_modules") {
+                continue;
+            }
+            root = parts[0].to_string();
+            let name = parts[parts.len() - 1].to_string();
+            if crate::kind_for(&name).is_none() {
+                continue;
+            }
+            let rel = parts[1..].join("/");
+            let modified = std::time::UNIX_EPOCH + std::time::Duration::from_millis(prop_f64(&file, "lastModified") as u64);
+            rows.push(crate::Row {
+                path: format!("{root}/{rel}"),
+                kind: crate::kind_for(&name),
+                folder: if parts.len() > 2 { parts[parts.len() - 2].to_string() } else { root.clone() },
+                name,
+                modified: Some(modified),
+                size: prop_f64(&file, "size") as u64,
+            });
+            by_rel.insert(rel, file);
+        }
+        target.remove();
+        if root.is_empty() {
+            return;
+        }
+        rows.sort_by(|a, b| b.modified.cmp(&a.modified));
+        rows.truncate(500);
+        DIRFILES.with(|m| m.borrow_mut().insert(root.clone(), by_rel));
+        scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key: root, rows, added: true });
+        repaint();
+    });
+    call(&input, "addEventListener", &[Js::from_str("change"), on_change])?;
+    call(&input, "click", &[])?;
+    Ok(())
+}
+
+fn prop_string(obj: &Js, key: &str) -> String {
+    js_sys::Reflect::get(obj, &key.into()).ok().and_then(|v| v.as_string()).unwrap_or_default()
+}
+
+fn prop_f64(obj: &Js, key: &str) -> f64 {
+    js_sys::Reflect::get(obj, &key.into()).ok().and_then(|v| v.as_f64()).unwrap_or(0.0)
+}
+
+/// Supported files in `root` and the folders two levels below it, newest first (the same shape as
+/// the desktop listing). Paths are `key/relative/path`.
+async fn scan_dir(root: &Js, key: &str) -> Result<Vec<crate::Row>, String> {
+    const MAX_ROWS: usize = 500;
+    let mut rows: Vec<crate::Row> = Vec::new();
+    let mut stack = vec![(root.clone(), String::new(), key.to_string(), 0u8)];
+    'walk: while let Some((dir, prefix, dir_name, depth)) = stack.pop() {
+        let iter = call(&dir, "values", &[])?;
+        loop {
+            let next = await_js(call(&iter, "next", &[])?).await?;
+            if js_sys::Reflect::get(&next, &"done".into()).ok().and_then(|d| d.as_bool()).unwrap_or(true) {
+                break;
+            }
+            let entry = js_sys::Reflect::get(&next, &"value".into()).map_err(js_err)?;
+            let name = prop_string(&entry, "name");
+            if name.starts_with('.') {
+                continue;
+            }
+            match prop_string(&entry, "kind").as_str() {
+                "directory" if depth < 2 => stack.push((entry, format!("{prefix}{name}/"), name, depth + 1)),
+                "file" if crate::kind_for(&name).is_some() => {
+                    let file = await_js(call(&entry, "getFile", &[])?).await?;
+                    let modified = std::time::UNIX_EPOCH + std::time::Duration::from_millis(prop_f64(&file, "lastModified") as u64);
+                    rows.push(crate::Row {
+                        path: format!("{key}/{prefix}{name}"),
+                        kind: crate::kind_for(&name),
+                        name,
+                        folder: dir_name.clone(),
+                        modified: Some(modified),
+                        size: prop_f64(&file, "size") as u64,
+                    });
+                    if rows.len() >= MAX_ROWS {
+                        break 'walk;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    rows.sort_by(|a, b| b.modified.cmp(&a.modified));
+    Ok(rows)
+}
+
+/// Shows the folder picker and queues the chosen folder's listing in `scans`.
+pub fn add_folder(scans: crate::FolderScans) {
+    if !has_directory_picker() {
+        if let Err(e) = add_folder_from_input(scans) {
+            log::error!("folder picker failed: {e}");
+        }
+        return;
+    }
+    wasm_bindgen_futures::spawn_local(async move {
+        let result: Result<Option<(String, Vec<crate::Row>)>, String> = async {
+            let window = web_sys::window().ok_or("no window")?;
+            let handle = match await_js(call(&window, "showDirectoryPicker", &[])?).await {
+                Ok(h) => h,
+                Err(e) if e.contains("AbortError") => return Ok(None),
+                Err(e) => return Err(e),
+            };
+            // Two different folders can share a name; the key must stay unique.
+            let base = prop_string(&handle, "name");
+            let mut key = base.clone();
+            let mut n = 2;
+            loop {
+                let taken = DIRS.with(|m| m.borrow().get(&key).cloned());
+                match taken {
+                    None => break,
+                    Some(old) => {
+                        let same = match call(&old, "isSameEntry", &[handle.clone()]) {
+                            Ok(p) => await_js(p).await.ok().and_then(|v| v.as_bool()).unwrap_or(false),
+                            Err(_) => false,
+                        };
+                        if same {
+                            break;
+                        }
+                        key = format!("{base} ({n})");
+                        n += 1;
+                    }
+                }
+            }
+            DIRS.with(|m| m.borrow_mut().insert(key.clone(), handle.clone()));
+            let rows = scan_dir(&handle, &key).await?;
+            Ok(Some((key, rows)))
+        }
+        .await;
+        match result {
+            Ok(Some((key, rows))) => {
+                scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key, rows, added: true });
+                repaint();
+            }
+            Ok(None) => {}
+            Err(e) => log::error!("folder picker failed: {e}"),
+        }
+    });
+}
+
+/// Lists `key` again (files may have changed on disk) and queues the result.
+pub fn rescan_folder(key: &str, scans: crate::FolderScans) {
+    let Some(handle) = DIRS.with(|m| m.borrow().get(key).cloned()) else { return };
+    let key = key.to_string();
+    wasm_bindgen_futures::spawn_local(async move {
+        match scan_dir(&handle, &key).await {
+            Ok(rows) => {
+                scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key, rows, added: false });
+                repaint();
+            }
+            Err(e) => log::error!("couldn't list {key}: {e}"),
+        }
+    });
+}
+
+/// The directory key `path` (`key/rel/path`) belongs to, if it is one of the added folders.
+fn folder_of(path: &str) -> Option<(String, String)> {
+    let mut keys: Vec<String> = DIRS.with(|m| m.borrow().keys().cloned().collect());
+    keys.extend(DIRFILES.with(|m| m.borrow().keys().cloned().collect::<Vec<_>>()));
+    keys.iter()
+        .filter_map(|k| path.strip_prefix(k.as_str()).and_then(|r| r.strip_prefix('/')).map(|rel| (k.clone(), rel.to_string())))
+        .max_by_key(|(k, _)| k.len())
+}
+
+pub fn is_folder_path(path: &str) -> bool {
+    folder_of(path).is_some()
+}
+
+/// Reads a file listed in an added folder and queues its bytes in `inbox`, keeping its handle so
+/// Save writes back to it.
+pub fn open_from_folder(path: &str, inbox: Inbox) {
+    let Some((key, rel)) = folder_of(path) else { return };
+    // A snapshot folder (no directory picker): the `File` itself, no handle to write back to.
+    if let Some(file) = DIRFILES.with(|m| m.borrow().get(&key).and_then(|f| f.get(&rel).cloned())) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+            let read = async { await_js(call(&file, "arrayBuffer", &[])?).await };
+            match read.await {
+                Ok(buf) => {
+                    inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, js_sys::Uint8Array::new(&buf).to_vec()));
+                    repaint();
+                }
+                Err(e) => log::error!("couldn't read {rel}: {e}"),
+            }
+        });
+        return;
+    }
+    let Some(root) = DIRS.with(|m| m.borrow().get(&key).cloned()) else { return };
+    wasm_bindgen_futures::spawn_local(async move {
+        let result: Result<(), String> = async {
+            let parts: Vec<&str> = rel.split('/').collect();
+            let (file_name, dirs) = parts.split_last().ok_or("empty path")?;
+            let mut dir = root;
+            for d in dirs {
+                dir = await_js(call(&dir, "getDirectoryHandle", &[Js::from_str(d)])?).await?;
+            }
+            let handle = await_js(call(&dir, "getFileHandle", &[Js::from_str(file_name)])?).await?;
+            let file = await_js(call(&handle, "getFile", &[])?).await?;
+            let buf = await_js(call(&file, "arrayBuffer", &[])?).await?;
+            let name = prop_string(&handle, "name");
+            inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name.clone(), js_sys::Uint8Array::new(&buf).to_vec()));
+            remember_handle(name, handle).await;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => repaint(),
+            Err(e) => log::error!("couldn't open {rel}: {e}"),
+        }
+    });
 }
 
 /// Opens a document picker: the File System Access one where available (so Save can write back),
@@ -266,7 +538,7 @@ fn pick_doc(description: &'static str, exts: &'static [&'static str], multiple: 
 /// otherwise (or if the write is refused) downloads a copy.
 fn save_file(path: &str, bytes: &[u8]) -> Result<(), String> {
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let Some(handle) = HANDLES.with(|m| m.borrow().get(&name).cloned()) else {
+    let Some(handle) = HANDLES.with(|m| m.borrow().get(&name).cloned().flatten()) else {
         return download(path, bytes);
     };
     let (path, bytes) = (path.to_string(), bytes.to_vec());
