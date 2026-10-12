@@ -17,7 +17,7 @@ mod platform;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
     Word,
     Grid,
@@ -193,9 +193,10 @@ impl Tab {
     fn context_changed(&mut self) {
         match self {
             Tab::Word(a) => a.context_changed(),
-            Tab::Grid(a) => a.context_changed(),
             Tab::Deck(a) => a.context_changed(),
-            Tab::Pdf(a) => a.context_changed(),
+            // GridCraft and PdfCraft keep their font state private: the shell puts their fonts
+            // and style back itself (`Look`).
+            Tab::Grid(_) | Tab::Pdf(_) => {}
         }
     }
 
@@ -236,6 +237,40 @@ impl Tab {
 }
 
 /// One open window of an app. Several of the same kind can be open at once.
+/// An app's fonts and style as it installed them into the shared egui context, kept so they can
+/// be put back when the app comes to the front again.
+struct Look {
+    fonts: egui::FontDefinitions,
+    light: std::sync::Arc<egui::Style>,
+    dark: std::sync::Arc<egui::Style>,
+}
+
+impl Look {
+    fn capture(ctx: &egui::Context) -> Look {
+        Look { fonts: ctx.fonts(|f| f.definitions().clone()), light: ctx.style_of(egui::Theme::Light), dark: ctx.style_of(egui::Theme::Dark) }
+    }
+
+    /// Fonts activate on the next pass but a style applies at once, and a style naming a font
+    /// family the active set lacks panics wherever text is drawn. So the fonts go first, under a
+    /// plain style that only uses the built-in families; `apply_style` follows a frame later.
+    fn apply_fonts(&self, ctx: &egui::Context) {
+        ctx.set_fonts(self.fonts.clone());
+        let plain = std::sync::Arc::new(egui::Style::default());
+        ctx.set_style_of(egui::Theme::Light, plain.clone());
+        ctx.set_style_of(egui::Theme::Dark, plain);
+    }
+
+    fn apply_style(&self, ctx: &egui::Context) {
+        ctx.set_style_of(egui::Theme::Light, self.light.clone());
+        ctx.set_style_of(egui::Theme::Dark, self.dark.clone());
+    }
+}
+
+/// Apps whose own `context_changed` is not available to the shell; it restores their `Look`.
+fn restores_look(kind: Kind) -> bool {
+    matches!(kind, Kind::Grid | Kind::Pdf)
+}
+
 struct Entry {
     id: u64,
     kind: Kind,
@@ -602,6 +637,14 @@ struct Suite {
     /// Files the browser delivered (Open file, drag and drop), each opened in its own tab.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     inbox: Inbox,
+    /// Each `restores_look` app's fonts and style, as last seen installed.
+    looks: std::collections::HashMap<Kind, Look>,
+    /// Frames the current context owner has been showing (its own install takes a couple).
+    owner_frames: u32,
+    /// Frames left to skip drawing a tab whose fonts were just put back (they apply next pass).
+    settle: u8,
+    /// An app whose style goes back once its fonts are active (see `Look::apply_fonts`).
+    restyle: Option<Kind>,
 }
 
 impl Suite {
@@ -618,7 +661,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), inbox: Inbox::default() };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None };
         suite.recount();
         suite
     }
@@ -1168,6 +1211,17 @@ fn ai_app(kind: Kind) -> ai::App {
 
 impl eframe::App for Suite {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Leaving GridCraft or PdfCraft: the context still holds what they installed, before
+        // another app or Home replaces it this frame. Keep it for the way back.
+        if let Some(k) = self.ctx_owner
+            && restores_look(k)
+            && self.owner_frames >= 4
+        {
+            let showing = matches!(self.view, View::Tab(id) if self.entries.iter().any(|e| e.id == id && e.kind == k));
+            if !showing || self.owner_frames % 60 == 4 {
+                self.looks.insert(k, Look::capture(ctx));
+            }
+        }
         if let Some((path, n)) = self.shot.as_mut() {
             *n += 1;
             ctx.request_repaint();
@@ -1245,6 +1299,9 @@ impl eframe::App for Suite {
         if self.view == View::Home {
             if !self.home_styled {
                 BOLD_READY.store(false, std::sync::atomic::Ordering::Relaxed);
+                // The app that was showing may have left a style naming font families of its own
+                // (GridCraft's "ui"); Home's fonts do not have them.
+                ctx.all_styles_mut(|s| *s = egui::Style::default());
                 ctx.set_visuals(home_visuals());
                 install_home_fonts(ctx);
                 self.home_styled = true;
@@ -1275,13 +1332,32 @@ impl eframe::App for Suite {
             self.restore_home = false;
         }
         self.save_session_if_changed();
+        // The fonts put back last frame are active now: the app's own style can follow.
+        if self.settle == 1
+            && let Some(k) = self.restyle.take()
+            && let Some(look) = self.looks.get(&k)
+        {
+            look.apply_style(ctx);
+            ctx.request_repaint();
+        }
         if let View::Tab(id) = self.view
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
         {
             if self.ctx_owner != Some(e.kind) {
                 e.tab.context_changed();
                 self.ctx_owner = Some(e.kind);
+                self.owner_frames = 0;
+                if restores_look(e.kind)
+                    && let Some(look) = self.looks.get(&e.kind)
+                {
+                    look.apply_fonts(ctx);
+                    // New fonts take effect on the next pass: draw nothing until then.
+                    self.settle = 2;
+                    self.restyle = Some(e.kind);
+                    ctx.request_repaint();
+                }
             }
+            self.owner_frames = self.owner_frames.saturating_add(1);
             e.tab.logic(ctx, frame);
         }
         if let View::Tab(id) = self.view
@@ -1458,11 +1534,13 @@ impl eframe::App for Suite {
             View::Home => self.home(ui),
             View::Tab(id) => {
                 let owner = self.ctx_owner;
+                let settling = self.settle > 0;
+                self.settle = self.settle.saturating_sub(1);
                 if let Some(e) = self.entry_mut(id) {
                     // A tab clicked in this very frame has not had its fonts and visuals
                     // installed yet (`logic` does that at the start of the next frame): drawing it
                     // now would use another app's font families, which panics.
-                    if owner == Some(e.kind) {
+                    if owner == Some(e.kind) && !settling {
                         e.tab.ui(ui, frame);
                     } else {
                         ui.ctx().request_repaint();
