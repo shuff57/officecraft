@@ -150,18 +150,33 @@ pub struct Settings {
     reveal: bool,
     saved_note: String,
     test: std::sync::Arc<std::sync::Mutex<Option<Result<usize, String>>>>,
+    /// The models the endpoint lists and what pinging each one found.
+    probe: std::sync::Arc<std::sync::Mutex<Probe>>,
+    /// OpenRouter: list only the `:free` models (what a free account can use).
+    free_only: bool,
+}
+
+/// What the Settings window knows about the endpoint's models.
+#[derive(Default)]
+struct Probe {
+    ids: Vec<String>,
+    /// Per model: `Ok(seconds)` when a one-word chat completion came back, else why not.
+    results: std::collections::HashMap<String, Result<f32, String>>,
+    testing: std::collections::HashSet<String>,
+    all_running: bool,
+    stop: bool,
 }
 
 impl Settings {
     pub fn new(cfg: &Config) -> Settings {
-        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default() }
+        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default(), probe: Default::default(), free_only: true }
     }
 
     /// `Some(Some(cfg))`: saved; `Some(None)`: closed without saving; `None`: still open.
     pub fn ui(&mut self, ctx: &egui::Context) -> Option<Option<Config>> {
         let mut result = None;
         let mut open = true;
-        egui::Window::new("Assistant settings").open(&mut open).collapsible(false).resizable(false).default_width(440.0).show(ctx, |ui| {
+        egui::Window::new("Assistant settings").open(&mut open).collapsible(false).resizable(false).default_width(500.0).show(ctx, |ui| {
             let d = &mut self.draft;
             ui.label(egui::RichText::new("Provider").strong());
             ui.horizontal(|ui| {
@@ -169,6 +184,7 @@ impl Settings {
                     if ui.selectable_label(d.provider == p, p.title()).clicked() {
                         d.provider = p;
                         *self.test.lock().unwrap() = None;
+                        *self.probe.lock().unwrap() = Probe::default();
                     }
                 }
             });
@@ -228,9 +244,14 @@ impl Settings {
                     probe.apply();
                     *self.test.lock().unwrap() = None;
                     let slot = self.test.clone();
+                    let models = self.probe.clone();
+                    *models.lock().unwrap() = Probe::default();
                     let ctx = ui.ctx().clone();
                     spawn_task(async move {
                         let r = fetch_models(&probe, 8).await;
+                        if let Ok(ids) = &r {
+                            models.lock().unwrap().ids = ids.clone();
+                        }
                         *slot.lock().unwrap() = Some(r.map(|v| v.len()));
                         ctx.request_repaint();
                     });
@@ -245,6 +266,7 @@ impl Settings {
                     None => {}
                 }
             });
+            self.model_list(ui);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui.button(egui::RichText::new("Save").strong()).clicked() {
@@ -267,6 +289,124 @@ impl Settings {
             result = Some(None);
         }
         result
+    }
+}
+
+impl Settings {
+    /// The endpoint's models with a test ping each, so a free account can see which ones answer.
+    fn model_list(&mut self, ui: &mut egui::Ui) {
+        let (provider, chosen) = (self.draft.provider, self.draft.models[self.draft.provider.index()].clone());
+        let (listed, all_running) = {
+            let g = self.probe.lock().unwrap();
+            (g.ids.len(), g.all_running)
+        };
+        if listed == 0 {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Press Test connection to list the models, then test which ones your account can use.").size(12.0).weak());
+            return;
+        }
+        ui.add_space(6.0);
+        ui.separator();
+        let free_only = provider == Provider::OpenRouter && self.free_only;
+        let visible: Vec<String> = {
+            let g = self.probe.lock().unwrap();
+            g.ids.iter().filter(|id| !free_only || id.ends_with(":free")).cloned().collect()
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("Models ({})", visible.len())).strong());
+            if provider == Provider::OpenRouter {
+                ui.checkbox(&mut self.free_only, "Free only");
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if all_running {
+                    if ui.button("Stop").clicked() {
+                        self.probe.lock().unwrap().stop = true;
+                    }
+                } else if ui.button("Test all").on_hover_text("Ping each listed model once (the first 30), one after another").clicked() {
+                    let mut cfg = self.draft.clone();
+                    cfg.apply();
+                    let probe = self.probe.clone();
+                    {
+                        let mut g = probe.lock().unwrap();
+                        g.stop = false;
+                        g.all_running = true;
+                    }
+                    let ctx = ui.ctx().clone();
+                    let ids: Vec<String> = visible.iter().take(30).cloned().collect();
+                    spawn_task(async move {
+                        for id in ids {
+                            {
+                                let mut g = probe.lock().unwrap();
+                                if g.stop {
+                                    break;
+                                }
+                                g.testing.insert(id.clone());
+                            }
+                            ctx.request_repaint();
+                            let r = ping_model(&cfg, &id).await;
+                            let mut g = probe.lock().unwrap();
+                            g.testing.remove(&id);
+                            g.results.insert(id, r);
+                            drop(g);
+                            ctx.request_repaint();
+                        }
+                        probe.lock().unwrap().all_running = false;
+                        ctx.request_repaint();
+                    });
+                }
+            });
+        });
+        let green = egui::Color32::from_rgb(46, 125, 79);
+        let red = egui::Color32::from_rgb(194, 74, 47);
+        let mut pick: Option<String> = None;
+        let mut ping: Option<String> = None;
+        egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
+            let g = self.probe.lock().unwrap();
+            for id in &visible {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(*id == chosen, id).on_hover_text("Use this model").clicked() {
+                        pick = Some(id.clone());
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let busy = g.testing.contains(id);
+                        if ui.add_enabled(!busy, egui::Button::new("Test").small()).clicked() {
+                            ping = Some(id.clone());
+                        }
+                        if busy {
+                            ui.spinner();
+                        }
+                        match g.results.get(id) {
+                            Some(Ok(secs)) => {
+                                ui.colored_label(green, format!("✓ available · {secs:.1}s"));
+                            }
+                            Some(Err(e)) => {
+                                let short: String = if e.chars().count() > 34 { e.chars().take(33).collect::<String>() + "…" } else { e.clone() };
+                                ui.colored_label(red, format!("✗ {short}")).on_hover_text(e);
+                            }
+                            None => {}
+                        }
+                    });
+                });
+            }
+        });
+        if let Some(id) = pick {
+            self.draft.models[provider.index()] = id;
+        }
+        if let Some(id) = ping {
+            let mut cfg = self.draft.clone();
+            cfg.apply();
+            let probe = self.probe.clone();
+            probe.lock().unwrap().testing.insert(id.clone());
+            let ctx = ui.ctx().clone();
+            spawn_task(async move {
+                let r = ping_model(&cfg, &id).await;
+                let mut g = probe.lock().unwrap();
+                g.testing.remove(&id);
+                g.results.insert(id, r);
+                drop(g);
+                ctx.request_repaint();
+            });
+        }
     }
 }
 
@@ -338,6 +478,8 @@ pub enum Action {
     Send,
     /// A model was picked in the header: remember it.
     SetModel(String),
+    /// The panel's settings icon was pressed.
+    OpenSettings,
 }
 
 /// A streaming reply's events.
@@ -477,6 +619,9 @@ impl Chat {
             paint_spark(ui.painter(), r, accent);
             ui.label(egui::RichText::new("Assistant").strong().size(15.0).color(ink));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(egui::Button::new(egui::RichText::new("⚙").size(14.0).color(muted)).frame(false)).on_hover_text("Assistant settings: provider, endpoint, API keys, test models").clicked() {
+                    action = Some(Action::OpenSettings);
+                }
                 let can_new = !self.items.is_empty() && !busy;
                 let r = ui.add_enabled(can_new, egui::Button::new(egui::RichText::new("New chat").size(12.0)).small()).on_hover_text("Start a new conversation");
                 if r.clicked() {
@@ -1629,6 +1774,57 @@ fn error_message(url: &str, status: u16, body: &str) -> String {
     let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
     let msg = v.pointer("/error/message").and_then(Value::as_str).or_else(|| v.get("error").and_then(Value::as_str)).unwrap_or("request failed");
     format!("{url} answered {status}: {msg}")
+}
+
+/// Why a ping failed, in words a free-tier user can act on.
+fn explain_status(status: u16, body: &str) -> String {
+    let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let msg = v.pointer("/error/message").and_then(Value::as_str).or_else(|| v.get("error").and_then(Value::as_str)).unwrap_or("").trim();
+    let why = match status {
+        401 | 403 => "not available on this account",
+        402 => "needs credits or a paid plan",
+        404 => "model not found",
+        429 => "rate limited, try again shortly",
+        _ => "request failed",
+    };
+    if msg.is_empty() { format!("{why} (HTTP {status})") } else { format!("{why}: {msg} (HTTP {status})") }
+}
+
+/// One tiny, non-streamed chat completion: `Ok(seconds)` when the model answered.
+async fn ping_model(cfg: &Config, model: &str) -> Result<f32, String> {
+    let url = format!("{}/chat/completions", cfg.base_url);
+    let body = json!({"model": model, "messages": [{"role": "user", "content": "Reply with the single word: ok"}], "max_tokens": 16, "stream": false});
+    let t0 = Instant::now();
+    let (status, text) = post_json(&url, cfg.key.as_deref(), &body, 45).await?;
+    if !(200..300).contains(&status) {
+        return Err(explain_status(status, &text));
+    }
+    // Some gateways answer 200 and put the refusal in the body.
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if let Some(m) = v.pointer("/error/message").and_then(Value::as_str) {
+        return Err(m.to_string());
+    }
+    Ok(t0.elapsed().as_secs_f32())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn post_json(url: &str, key: Option<&str>, body: &Value, timeout_secs: u64) -> Result<(u16, String), String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(timeout_secs))).http_status_as_error(false).build().into();
+    let mut req = agent.post(url);
+    if let Some(k) = key {
+        req = req.header("Authorization", &format!("Bearer {k}"));
+    }
+    let mut resp = req.header("Content-Type", "application/json").send(body.to_string()).map_err(|e| format!("Can't reach {url}: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().unwrap_or_default();
+    Ok((status, text))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn post_json(url: &str, key: Option<&str>, body: &Value, timeout_secs: u64) -> Result<(u16, String), String> {
+    let resp = fetch(url, "POST", key, Some(body.to_string()), timeout_secs).await?;
+    let status = resp.status();
+    Ok((status, response_text(&resp).await.unwrap_or_default()))
 }
 
 /// A model list from a `GET /models` body.

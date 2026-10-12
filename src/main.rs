@@ -1446,6 +1446,11 @@ impl eframe::App for Suite {
                     self.ai_cfg.set_model(&m);
                     let _ = self.ai_cfg.save();
                 }
+                Some(ai::Action::OpenSettings) => {
+                    if self.ai_settings.is_none() {
+                        self.ai_settings = Some(ai::Settings::new(&self.ai_cfg));
+                    }
+                }
                 None => {}
             }
         }
