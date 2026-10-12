@@ -1886,7 +1886,7 @@ dependencies = [
  "deckcraft-render",
  "deckcraft-text",
  "egui",
- "equashion-egui",
+ "equashion-egui 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa)",
  "js-sys",
  "log",
  "serde",
@@ -2422,6 +2422,16 @@ checksum = "773fa9c96dd0dbef887e39d0ed6177f141cce4d68e6041df77570aa3702dfa13"
 [[package]]
 name = "equashion-egui"
 version = "0.1.0"
+dependencies = [
+ "egui",
+ "equashion-layout 0.1.0",
+ "equashion-math 0.1.0",
+ "equashion-render 0.1.0",
+]
+
+[[package]]
+name = "equashion-egui"
+version = "0.1.0"
 source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
 dependencies = [
  "egui",
@@ -2496,6 +2506,7 @@ version = "0.1.0"
 dependencies = [
  "equashion-layout 0.1.0",
  "kurbo 0.13.1",
+ "vello_cpu 0.2.0",
 ]
 
 [[package]]
@@ -8456,6 +8467,7 @@ name = "viz_native"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "equashion-egui 0.1.0",
  "math_core",
  "math_playground",
  "png 0.17.16",
@@ -9856,7 +9868,7 @@ name = "wordcraft-ui-egui"
 version = "0.5.0"
 dependencies = [
  "egui",
- "equashion-egui",
+ "equashion-egui 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa)",
  "image",
  "js-sys",
  "log",
