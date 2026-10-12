@@ -8455,10 +8455,12 @@ dependencies = [
 name = "vishual-ui-egui"
 version = "0.1.0"
 dependencies = [
+ "any_spawner",
  "egui",
  "equashion-egui 0.1.0",
  "instant",
  "js-sys",
+ "leptos",
  "math_core",
  "math_playground",
  "png 0.17.16",
