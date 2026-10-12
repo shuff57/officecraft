@@ -893,9 +893,9 @@ impl Suite {
             }
 
             ui.add_space(18.0);
-            let starts = [(Kind::Word, "Document", "Docs"), (Kind::Grid, "Spreadsheet", "Sheets"), (Kind::Deck, "Presentation", "Slides"), (Kind::Pdf, "PDF tools", "PDF")];
+            let starts = [(Kind::Word, "WordCraft", "Docs"), (Kind::Grid, "GridCraft", "Sheets"), (Kind::Deck, "DeckCraft", "Slides"), (Kind::Pdf, "PdfCraft", "PDF")];
             ui.spacing_mut().item_spacing.x = 12.0;
-            ui.columns(5, |cols| {
+            ui.columns(4, |cols| {
                 for (col, (kind, label, sub)) in cols.iter_mut().zip(starts) {
                     let card = framed().inner_margin(egui::Margin::symmetric(12, 10)).show(col, |ui| {
                         ui.set_width(ui.available_width());
