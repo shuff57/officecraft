@@ -6,11 +6,20 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use eframe::egui;
+#[cfg(target_arch = "wasm32")]
+use web::{deck_services, grid_services, word_services};
+
+/// Files read asynchronously in a browser page (picker, drag and drop): (name, bytes).
+type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
 mod ai;
+mod platform;
+#[cfg(not(target_arch = "wasm32"))]
 mod updater;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Kind {
     Word,
     Grid,
@@ -38,6 +47,7 @@ enum Tab {
     Pdf(Box<pdfcraft_ui_egui::PdfCraftApp>),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn word_services() -> wordcraft_ui_egui::Services {
     wordcraft_ui_egui::Services {
         pick_open: Some(Box::new(|purpose: &str| {
@@ -54,6 +64,7 @@ fn word_services() -> wordcraft_ui_egui::Services {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn grid_services() -> gridcraft_ui_egui::Services {
     gridcraft_ui_egui::Services {
         pick_open: Some(Box::new(|| {
@@ -75,6 +86,7 @@ fn grid_services() -> gridcraft_ui_egui::Services {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn deck_services() -> deckcraft_ui_egui::Services {
     deckcraft_ui_egui::Services {
         pick_open: Some(Box::new(|_purpose: &str| {
@@ -143,6 +155,30 @@ enum View {
 }
 
 /// Which app opens a file, by extension.
+/// The Home empty-state line in the browser build.
+#[cfg(target_arch = "wasm32")]
+fn web_open_hint() -> &'static str {
+    if web::can_write_in_place() {
+        "Press Open file, or add a folder in the sidebar. Save writes back to the file you opened; files dropped on the page download a copy instead."
+    } else {
+        "Press Open file, add a folder in the sidebar, or drop a file on the page. Files stay in your browser; Save downloads a copy."
+    }
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn web_open_hint() -> &'static str {
+    ""
+}
+
+/// Whether the browser build can show the folder sidebar.
+#[cfg(target_arch = "wasm32")]
+fn web_can_browse() -> bool {
+    web::can_browse_folders()
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn web_can_browse() -> bool {
+    false
+}
+
 fn kind_for(path: &str) -> Option<Kind> {
     let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
@@ -159,25 +195,12 @@ const OPEN_EXTS: &[&str] = &[
 ];
 const MAX_RECENT: usize = 12;
 
-fn recent_file() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
-    Some(base.join("officecraft").join("recent.txt"))
-}
-
 fn load_recent() -> Vec<String> {
-    let Some(p) = recent_file() else { return Vec::new() };
-    std::fs::read_to_string(p).map(|s| s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+    platform::read_lines("recent.txt")
 }
 
 fn save_recent(list: &[String]) {
-    if let Some(p) = recent_file() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, list.join("\n"));
-    }
+    platform::write_lines("recent.txt", list);
 }
 
 impl Tab {
@@ -196,9 +219,26 @@ impl Tab {
     fn context_changed(&mut self) {
         match self {
             Tab::Word(a) => a.context_changed(),
-            Tab::Grid(a) => a.context_changed(),
             Tab::Deck(a) => a.context_changed(),
-            Tab::Pdf(a) => a.context_changed(),
+            // GridCraft and PdfCraft keep their font state private: the shell puts their fonts
+            // and style back itself (`Look`).
+            Tab::Grid(_) | Tab::Pdf(_) => {}
+        }
+    }
+
+    /// Web: hands a picked or dropped file's bytes to the app, which opens them on its next frame.
+    #[cfg(target_arch = "wasm32")]
+    fn deliver(&mut self, name: &str, bytes: Vec<u8>) {
+        let push = |inbox: Option<&Inbox>| {
+            if let Some(i) = inbox {
+                i.lock().unwrap_or_else(|e| e.into_inner()).push((name.to_string(), bytes.clone()));
+            }
+        };
+        match self {
+            Tab::Word(a) => push(a.services.inbox.as_ref()),
+            Tab::Grid(a) => push(a.services.inbox.as_ref()),
+            Tab::Deck(a) => push(a.services.inbox.as_ref()),
+            Tab::Pdf(a) => push(Some(&a.startup_inbox)),
         }
     }
 
@@ -210,15 +250,53 @@ impl Tab {
                 Ok(())
             }
             Tab::Deck(a) => a.open_path(path),
+            #[cfg(not(target_arch = "wasm32"))]
             Tab::Pdf(a) => {
                 a.open_path(path);
                 Ok(())
             }
+            // A page has no paths; files arrive through `deliver`.
+            #[cfg(target_arch = "wasm32")]
+            Tab::Pdf(_) => Err("opening by path is not available in the browser".into()),
         }
     }
 }
 
 /// One open window of an app. Several of the same kind can be open at once.
+/// An app's fonts and style as it installed them into the shared egui context, kept so they can
+/// be put back when the app comes to the front again.
+struct Look {
+    fonts: egui::FontDefinitions,
+    light: std::sync::Arc<egui::Style>,
+    dark: std::sync::Arc<egui::Style>,
+}
+
+impl Look {
+    fn capture(ctx: &egui::Context) -> Look {
+        Look { fonts: ctx.fonts(|f| f.definitions().clone()), light: ctx.style_of(egui::Theme::Light), dark: ctx.style_of(egui::Theme::Dark) }
+    }
+
+    /// Fonts activate on the next pass but a style applies at once, and a style naming a font
+    /// family the active set lacks panics wherever text is drawn. So the fonts go first, under a
+    /// plain style that only uses the built-in families; `apply_style` follows a frame later.
+    fn apply_fonts(&self, ctx: &egui::Context) {
+        ctx.set_fonts(self.fonts.clone());
+        let plain = std::sync::Arc::new(egui::Style::default());
+        ctx.set_style_of(egui::Theme::Light, plain.clone());
+        ctx.set_style_of(egui::Theme::Dark, plain);
+    }
+
+    fn apply_style(&self, ctx: &egui::Context) {
+        ctx.set_style_of(egui::Theme::Light, self.light.clone());
+        ctx.set_style_of(egui::Theme::Dark, self.dark.clone());
+    }
+}
+
+/// Apps whose own `context_changed` is not available to the shell; it restores their `Look`.
+fn restores_look(kind: Kind) -> bool {
+    matches!(kind, Kind::Grid | Kind::Pdf)
+}
+
 struct Entry {
     id: u64,
     kind: Kind,
@@ -235,6 +313,16 @@ enum Filter {
     All,
     Only(Kind),
 }
+
+/// A folder listing the browser delivered: a folder the visitor just added (`added`) or a
+/// fresh listing of one already in the sidebar.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+struct FolderScan {
+    key: String,
+    rows: Vec<Row>,
+    added: bool,
+}
+type FolderScans = std::sync::Arc<std::sync::Mutex<Vec<FolderScan>>>;
 
 /// One file in the Home table.
 #[derive(Clone)]
@@ -287,21 +375,32 @@ fn list_folder(dir: &str) -> Vec<Row> {
     rows
 }
 
-fn folders_file() -> Option<std::path::PathBuf> {
-    recent_file().map(|p| p.with_file_name("folders.txt"))
-}
-
+/// Folders the visitor added. A page can't reopen a folder without a fresh pick, so the browser
+/// build starts with none and keeps them for the session only.
 fn load_folders() -> Vec<String> {
-    let Some(p) = folders_file() else { return Vec::new() };
-    std::fs::read_to_string(p).map(|s| s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+    if cfg!(target_arch = "wasm32") {
+        return Vec::new();
+    }
+    platform::read_lines("folders.txt")
 }
 
 fn save_folders(list: &[String]) {
-    if let Some(p) = folders_file() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, list.join("\n"));
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
+    platform::write_lines("folders.txt", list);
+}
+
+/// The rows of folder `dir`: read from disk natively, the browser's last listing in a page.
+fn folder_listing(scans: &std::collections::HashMap<String, Vec<Row>>, dir: &str) -> Vec<Row> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        scans.get(dir).cloned().unwrap_or_default()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = scans;
+        list_folder(dir)
     }
 }
 
@@ -361,6 +460,56 @@ fn bold() -> egui::FontFamily {
     } else {
         egui::FontFamily::Proportional
     }
+}
+
+/// The OfficeCraft mark (assets/officecraft-logo.svg) drawn with the painter, scaled from its 512-unit box to `rect`.
+fn paint_logo(painter: &egui::Painter, rect: egui::Rect) {
+    let k = rect.width() / 512.0;
+    let at = |x: f32, y: f32| rect.min + egui::vec2(x, y) * k;
+    let r = |x: f32, y: f32, w: f32, h: f32| egui::Rect::from_min_size(at(x, y), egui::vec2(w, h) * k);
+    let white = egui::Color32::WHITE;
+    let soft = egui::Color32::from_white_alpha(217);
+    painter.rect_filled(r(16.0, 16.0, 480.0, 480.0), 112.0 * k, egui::Color32::from_rgb(0x2d, 0x4f, 0x6e));
+    let tiles = [
+        (91.0, 91.0, egui::Color32::from_rgb(0x3f, 0x5f, 0xe0)),
+        (271.0, 91.0, egui::Color32::from_rgb(0xf0, 0x7a, 0x1e)),
+        (91.0, 271.0, egui::Color32::from_rgb(0x1f, 0x9d, 0x55)),
+        (271.0, 271.0, egui::Color32::from_rgb(0x12, 0xa5, 0x8a)),
+    ];
+    for (x, y, c) in tiles {
+        painter.rect_filled(r(x, y, 150.0, 150.0), 36.0 * k, c);
+    }
+    // Glyphs: (tile origin, x, y, w, h, radius, colour), in tile units.
+    let mut g: Vec<(f32, f32, f32, f32, f32, f32, f32, egui::Color32)> = Vec::new();
+    // Docs: text lines.
+    for (y, w, c) in [(34.0, 86.0, white), (56.0, 62.0, soft), (78.0, 74.0, soft), (100.0, 40.0, soft)] {
+        g.push((91.0, 91.0, 32.0, y, w, 10.0, 5.0, c));
+    }
+    // Slides: title bar and three bars.
+    g.push((271.0, 91.0, 34.0, 28.0, 50.0, 9.0, 4.5, white));
+    g.push((271.0, 91.0, 34.0, 76.0, 26.0, 36.0, 6.0, soft));
+    g.push((271.0, 91.0, 62.0, 50.0, 26.0, 62.0, 6.0, white));
+    g.push((271.0, 91.0, 90.0, 64.0, 26.0, 48.0, 6.0, soft));
+    // Sheets: 3x3 cells.
+    for row in 0..3 {
+        for col in 0..3 {
+            let c = if row == 0 { white } else { egui::Color32::from_white_alpha(178) };
+            g.push((91.0, 271.0, 32.0 + 32.0 * col as f32, 34.0 + 28.0 * row as f32, 26.0, 22.0, 5.0, c));
+        }
+    }
+    for (ox, oy, x, y, w, h, rad, c) in g {
+        painter.rect_filled(r(ox + x, oy + y, w, h), rad * k, c);
+    }
+    // PDF: page outline with a folded corner and two text lines.
+    let stroke = |w: f32, c: egui::Color32| egui::Stroke::new(w * k, c);
+    let p = |x: f32, y: f32| at(271.0 + x, 271.0 + y);
+    painter.add(egui::Shape::closed_line(
+        vec![p(46.0, 28.0), p(86.0, 28.0), p(106.0, 48.0), p(106.0, 122.0), p(46.0, 122.0)],
+        stroke(8.0, white),
+    ));
+    painter.add(egui::Shape::line(vec![p(86.0, 28.0), p(86.0, 48.0), p(106.0, 48.0)], stroke(8.0, white)));
+    painter.line_segment([p(60.0, 78.0), p(92.0, 78.0)], stroke(7.0, soft));
+    painter.line_segment([p(60.0, 96.0), p(80.0, 96.0)], stroke(7.0, soft));
 }
 
 fn b(text: &str, size: f32) -> egui::RichText {
@@ -469,18 +618,12 @@ fn framed() -> egui::Frame {
     egui::Frame::new().fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(10.0)
 }
 
-fn home_view_file() -> Option<std::path::PathBuf> {
-    recent_file().map(|p| p.with_file_name("homeview.txt"))
-}
-
 fn load_home_grid() -> bool {
-    home_view_file().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| s.trim() != "list").unwrap_or(true)
+    platform::read("homeview.txt").map(|s| s.trim() != "list").unwrap_or(true)
 }
 
 fn save_home_grid(grid: bool) {
-    if let Some(p) = home_view_file() {
-        let _ = std::fs::write(p, if grid { "grid" } else { "list" });
-    }
+    let _ = platform::write("homeview.txt", if grid { "grid" } else { "list" });
 }
 
 /// A small drawn preview of what the file is, centred in `area`. No file is opened to make it.
@@ -529,7 +672,10 @@ fn thumb(painter: &egui::Painter, kind: Option<Kind>, area: egui::Rect) {
 }
 
 fn ago(t: std::time::SystemTime) -> String {
-    let secs = std::time::SystemTime::now().duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    // `SystemTime::now()` panics on wasm32; web_time's is std's natively and the browser's in a page.
+    let now = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let then = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = now.saturating_sub(then);
     match secs {
         0..=59 => "just now".to_string(),
         60..=3599 => format!("{} min ago", secs / 60),
@@ -548,29 +694,19 @@ fn human_size(n: u64) -> String {
     }
 }
 
-fn session_file() -> Option<std::path::PathBuf> {
-    recent_file().map(|p| p.with_file_name("session.txt"))
-}
-
 /// Marks that Home, not a file, was showing when the session was saved.
 const HOME_MARK: &str = "#home";
 
 /// Files that were open last time (the active one last), and whether Home was showing.
 fn load_session() -> (Vec<String>, bool) {
-    let Some(p) = session_file() else { return (Vec::new(), false) };
-    let text = std::fs::read_to_string(p).unwrap_or_default();
+    let text = platform::read("session.txt").unwrap_or_default();
     let home = text.lines().any(|l| l == HOME_MARK);
     let files = text.lines().filter(|l| !l.is_empty() && *l != HOME_MARK && std::path::Path::new(l).is_file()).map(str::to_string).collect();
     (files, home)
 }
 
 fn save_session(lines: &[String]) {
-    if let Some(p) = session_file() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, lines.join("\n"));
-    }
+    platform::write_lines("session.txt", lines);
 }
 
 struct Suite {
@@ -585,6 +721,7 @@ struct Suite {
     confirm_close: Option<u64>,
     ai_cfg: ai::Config,
     ai_settings: Option<ai::Settings>,
+    #[cfg(not(target_arch = "wasm32"))]
     updater: updater::Updater,
     /// Which app last installed its fonts and visuals into the one shared egui context.
     ctx_owner: Option<Kind>,
@@ -609,6 +746,21 @@ struct Suite {
     shot_sent: bool,
     home_styled: bool,
     folder_counts: Vec<usize>,
+    /// Browser build: listings delivered by the folder picker, and the last one per folder.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    folder_scans: FolderScans,
+    scans: std::collections::HashMap<String, Vec<Row>>,
+    /// Files the browser delivered (Open file, drag and drop), each opened in its own tab.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    inbox: Inbox,
+    /// Each `restores_look` app's fonts and style, as last seen installed.
+    looks: std::collections::HashMap<Kind, Look>,
+    /// Frames the current context owner has been showing (its own install takes a couple).
+    owner_frames: u32,
+    /// Frames left to skip drawing a tab whose fonts were just put back (they apply next pass).
+    settle: u8,
+    /// An app whose style goes back once its fonts are active (see `Look::apply_fonts`).
+    restyle: Option<Kind>,
 }
 
 impl Suite {
@@ -625,13 +777,13 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new() };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None };
         suite.recount();
         suite
     }
 
     fn recount(&mut self) {
-        self.folder_counts = self.folders.iter().map(|f| list_folder(f).len()).collect();
+        self.folder_counts = self.folders.iter().map(|f| folder_listing(&self.scans, f).len()).collect();
     }
 
     /// Starts a fresh, empty instance of `kind` and shows it.
@@ -661,6 +813,13 @@ impl Suite {
 
     /// Opens `path` in its own tab, or switches to the tab that already has it.
     fn open_file(&mut self, ctx: &egui::Context, path: &str) {
+        // Browser build: a row of an added folder is read through its handle and arrives via the inbox.
+        #[cfg(target_arch = "wasm32")]
+        if web::is_folder_path(path) {
+            web::open_from_folder(path, self.inbox.clone());
+            ctx.request_repaint();
+            return;
+        }
         if let Some(e) = self.entries.iter().find(|e| e.path.as_deref() == Some(path)) {
             self.view = View::Tab(e.id);
             ctx.request_repaint();
@@ -692,6 +851,22 @@ impl Suite {
                 self.notice = Some(format!("{path}: {e}"));
             }
         }
+        ctx.request_repaint();
+    }
+
+    /// Web: opens a file the browser delivered in its own tab. There is no path, so no recent entry.
+    #[cfg(target_arch = "wasm32")]
+    fn open_bytes(&mut self, ctx: &egui::Context, name: String, bytes: Vec<u8>) {
+        let Some(kind) = kind_for(&name) else {
+            self.notice = Some(format!("No Craft app opens {name}"));
+            return;
+        };
+        let id = self.push_tab(kind, Tab::create(kind));
+        if let Some(e) = self.entry_mut(id) {
+            e.tab.deliver(&name, bytes);
+            e.name = name;
+        }
+        self.notice = None;
         ctx.request_repaint();
     }
 
@@ -812,12 +987,18 @@ impl Suite {
                 ui.add_space(20.0);
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
+                    let (logo, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::hover());
+                    paint_logo(ui.painter(), logo);
+                    ui.add_space(4.0);
                     ui.label(b("OfficeCraft", 17.0));
                 });
                 ui.add_space(12.0);
                 if side_row(ui, self.folder_sel.is_none(), false, "Recent", Some(self.recent.len()), false).0.clicked() {
                     select = Some(None);
                 }
+                // A page can browse folders only where the browser offers a directory picker.
+                let folders_ui = !cfg!(target_arch = "wasm32") || web_can_browse();
+                if folders_ui {
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
@@ -848,6 +1029,7 @@ impl Suite {
                 p.text(rect.left_center() + egui::vec2(36.0, 0.0), egui::Align2::LEFT_CENTER, "Add folder", egui::FontId::new(14.0, bold()), ACCENT);
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     add_folder = true;
+                }
                 }
             });
 
@@ -972,7 +1154,7 @@ impl Suite {
 
             if rows.is_empty() {
                 ui.add_space(24.0);
-                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { "Files you open appear here. Drop a file on the window, or press Open file." }).color(MUTED));
+                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { if cfg!(target_arch = "wasm32") { web_open_hint() } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
             } else if want_grid {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     let gap = 16.0;
@@ -1052,15 +1234,22 @@ impl Suite {
         self.filter = want_filter;
         if let Some(s) = select {
             self.folder_sel = s;
-            self.folder_rows = s.and_then(|i| self.folders.get(i)).map(|d| list_folder(d)).unwrap_or_default();
+            self.folder_rows = s.and_then(|i| self.folders.get(i)).map(|d| folder_listing(&self.scans, d)).unwrap_or_default();
+            // Files may have changed since the folder was added: list it again in the background.
+            #[cfg(target_arch = "wasm32")]
+            if let Some(d) = s.and_then(|i| self.folders.get(i)) {
+                web::rescan_folder(d, self.folder_scans.clone());
+            }
         }
         if let Some(i) = remove_folder {
-            self.folders.remove(i);
+            let gone = self.folders.remove(i);
+            self.scans.remove(&gone);
             save_folders(&self.folders);
             self.folder_sel = None;
             self.folder_rows.clear();
             self.recount();
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if add_folder && let Some(dir) = rfd::FileDialog::new().pick_folder() {
             let dir = dir.to_string_lossy().to_string();
             if !self.folders.contains(&dir) {
@@ -1070,12 +1259,21 @@ impl Suite {
             self.recount();
             let i = self.folders.iter().position(|f| *f == dir);
             self.folder_sel = i;
-            self.folder_rows = list_folder(&dir);
+            self.folder_rows = folder_listing(&self.scans, &dir);
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if pick_files && let Some(p) = rfd::FileDialog::new().add_filter("Office files", OPEN_EXTS).pick_files() {
             // Several files at once each get their own tab.
             self.pending.extend(p.iter().map(|f| f.to_string_lossy().to_string()));
             ctx.request_repaint();
+        }
+        #[cfg(target_arch = "wasm32")]
+        if pick_files {
+            web::pick_files(OPEN_EXTS, self.inbox.clone());
+        }
+        #[cfg(target_arch = "wasm32")]
+        if add_folder {
+            web::add_folder(self.folder_scans.clone());
         }
         if let Some(k) = new {
             self.new_tab(k);
@@ -1147,6 +1345,17 @@ fn ai_app(kind: Kind) -> ai::App {
 
 impl eframe::App for Suite {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Leaving GridCraft or PdfCraft: the context still holds what they installed, before
+        // another app or Home replaces it this frame. Keep it for the way back.
+        if let Some(k) = self.ctx_owner
+            && restores_look(k)
+            && self.owner_frames >= 4
+        {
+            let showing = matches!(self.view, View::Tab(id) if self.entries.iter().any(|e| e.id == id && e.kind == k));
+            if !showing || self.owner_frames % 60 == 4 {
+                self.looks.insert(k, Look::capture(ctx));
+            }
+        }
         if let Some((path, n)) = self.shot.as_mut() {
             *n += 1;
             ctx.request_repaint();
@@ -1224,6 +1433,9 @@ impl eframe::App for Suite {
         if self.view == View::Home {
             if !self.home_styled {
                 BOLD_READY.store(false, std::sync::atomic::Ordering::Relaxed);
+                // The app that was showing may have left a style naming font families of its own
+                // (GridCraft's "ui"); Home's fonts do not have them.
+                ctx.all_styles_mut(|s| *s = egui::Style::default());
                 ctx.set_visuals(home_visuals());
                 install_home_fonts(ctx);
                 self.home_styled = true;
@@ -1241,18 +1453,65 @@ impl eframe::App for Suite {
         for p in std::mem::take(&mut self.pending) {
             self.open_file(ctx, &p);
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            web::set_dirty(self.entries.iter().any(|e| e.tab.is_dirty()));
+            let arrived = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
+            for (name, bytes) in arrived {
+                self.open_bytes(ctx, name, bytes);
+            }
+            let scanned = std::mem::take(&mut *self.folder_scans.lock().unwrap_or_else(|e| e.into_inner()));
+            for FolderScan { key, rows, added } in scanned {
+                let i = match self.folders.iter().position(|f| *f == key) {
+                    Some(i) => i,
+                    None => {
+                        self.folders.push(key.clone());
+                        self.folders.len() - 1
+                    }
+                };
+                self.folder_counts.resize(self.folders.len(), 0);
+                self.folder_counts[i] = rows.len();
+                if added {
+                    self.folder_sel = Some(i);
+                }
+                if self.folder_sel == Some(i) {
+                    self.folder_rows = rows.clone();
+                }
+                self.scans.insert(key, rows);
+                ctx.request_repaint();
+            }
+        }
         if self.restore_home && self.pending.is_empty() {
             self.view = View::Home;
             self.restore_home = false;
         }
         self.save_session_if_changed();
+        // The fonts put back last frame are active now: the app's own style can follow.
+        if self.settle == 1
+            && let Some(k) = self.restyle.take()
+            && let Some(look) = self.looks.get(&k)
+        {
+            look.apply_style(ctx);
+            ctx.request_repaint();
+        }
         if let View::Tab(id) = self.view
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
         {
             if self.ctx_owner != Some(e.kind) {
                 e.tab.context_changed();
                 self.ctx_owner = Some(e.kind);
+                self.owner_frames = 0;
+                if restores_look(e.kind)
+                    && let Some(look) = self.looks.get(&e.kind)
+                {
+                    look.apply_fonts(ctx);
+                    // New fonts take effect on the next pass: draw nothing until then.
+                    self.settle = 2;
+                    self.restyle = Some(e.kind);
+                    ctx.request_repaint();
+                }
             }
+            self.owner_frames = self.owner_frames.saturating_add(1);
             e.tab.logic(ctx, frame);
         }
         if let View::Tab(id) = self.view
@@ -1272,6 +1531,12 @@ impl eframe::App for Suite {
         // else (a picture dropped on a document) stays for the active app.
         let mut keep = Vec::new();
         for f in std::mem::take(&mut raw.dropped_files) {
+            // A browser hands over a name and reads the bytes asynchronously.
+            #[cfg(target_arch = "wasm32")]
+            if let Some(name) = f.path().file_name().map(|n| n.to_string_lossy().to_string()).filter(|n| kind_for(n).is_some()) {
+                web::read_dropped(f, name, self.inbox.clone(), ctx.clone());
+                continue;
+            }
             match f.path().to_str().filter(|p| kind_for(p).is_some()) {
                 Some(p) => self.pending.push(p.to_string()),
                 None => keep.push(f),
@@ -1336,6 +1601,8 @@ impl eframe::App for Suite {
                     if ui.button("⚙").on_hover_text("Assistant settings: provider, endpoint, API keys").clicked() {
                         open_settings = true;
                     }
+                    // A page cannot rebuild itself; the updater is for the installed app.
+                    #[cfg(not(target_arch = "wasm32"))]
                     if ui.button("⟳").on_hover_text("Updates: rebuild against the newest app commits").clicked() {
                         self.updater.open = !self.updater.open;
                     }
@@ -1360,6 +1627,7 @@ impl eframe::App for Suite {
             }
             self.ai_settings = None;
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if self.updater.ui(ui.ctx()) {
             updater::spawn_new_instance();
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1418,6 +1686,11 @@ impl eframe::App for Suite {
                     self.ai_cfg.set_model(&m);
                     let _ = self.ai_cfg.save();
                 }
+                Some(ai::Action::OpenSettings) => {
+                    if self.ai_settings.is_none() {
+                        self.ai_settings = Some(ai::Settings::new(&self.ai_cfg));
+                    }
+                }
                 None => {}
             }
         }
@@ -1425,11 +1698,13 @@ impl eframe::App for Suite {
             View::Home => self.home(ui),
             View::Tab(id) => {
                 let owner = self.ctx_owner;
+                let settling = self.settle > 0;
+                self.settle = self.settle.saturating_sub(1);
                 if let Some(e) = self.entry_mut(id) {
                     // A tab clicked in this very frame has not had its fonts and visuals
                     // installed yet (`logic` does that at the start of the next frame): drawing it
                     // now would use another app's font families, which panics.
-                    if owner == Some(e.kind) {
+                    if owner == Some(e.kind) && !settling {
                         e.tab.ui(ui, frame);
                     } else {
                         ui.ctx().request_repaint();
@@ -1459,11 +1734,21 @@ impl eframe::App for Suite {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    web::start();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
+    // Window/taskbar icon; the installed copies under hicolor are what the desktop entry uses.
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/app-icon/hicolor/256x256/apps/ai.storyteller.officecraft.png"))
+        .expect("bundled app icon is a valid png");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("OfficeCraft")
             .with_app_id("ai.storyteller.officecraft")
+            .with_icon(icon)
             .with_inner_size([1440.0, 920.0])
             .with_min_inner_size([760.0, 480.0])
             .with_drag_and_drop(true),

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>OfficeCraft</title>
+  <link data-trunk rel="rust" data-bin="officecraft" data-wasm-opt="z" data-weak-refs />
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #edf1f5; }
+    #officecraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #officecraft_loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #555; font: 14px system-ui, sans-serif; background: #edf1f5; transition: opacity .35s ease; }
+    #officecraft_loading svg { width: 160px; height: 160px; }
+    #officecraft_loading p { margin: 12px 0 0; }
+  </style>
+</head>
+<body>
+  <canvas id="officecraft_canvas"></canvas>
+  <div id="officecraft_loading">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true">
+  
+  <style>
+    /* Static end state is the default; motion is layered on only when the viewer allows it. */
+    .tile { transform-box: fill-box; transform-origin: center; }
+    .ln   { transform-box: fill-box; transform-origin: left center; }
+    .bar  { transform-box: fill-box; transform-origin: center bottom; }
+    .cell { transform-box: fill-box; transform-origin: center; }
+    .pg   { stroke-dasharray: 100; stroke-dashoffset: 0; }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .float { animation: float 1.75s ease-in-out infinite; }
+      .tile, .ln, .bar, .cell, .pg, .halo {
+        animation-duration: 3.5s;
+        animation-iteration-count: infinite;
+        animation-delay: calc((var(--d, 0s) - 7s) / 2);   /* offset inside the cycle (delays are authored on a 7 s timeline, played at 2x) */
+        animation-fill-mode: both;
+      }
+      .tile { animation-name: tile; animation-timing-function: cubic-bezier(.3,.7,.3,1); }
+      .ln   { animation-name: ln;   animation-timing-function: cubic-bezier(.5,0,.2,1); }
+      .bar  { animation-name: bar;  animation-timing-function: cubic-bezier(.3,1.4,.4,1); }
+      .cell { animation-name: cell; animation-timing-function: cubic-bezier(.3,1.5,.4,1); }
+      .pg   { animation-name: pg;   animation-timing-function: ease-in-out; }
+      .halo { animation-name: halo; animation-timing-function: ease-out; }
+    }
+
+    @keyframes float { 0%,100% { transform: translateY(-4px) } 50% { transform: translateY(4px) } }
+    @keyframes tile {
+      0%   { opacity: 0; transform: scale(.4) rotate(-8deg) }
+      9%   { opacity: 1; transform: scale(1.08) rotate(0) }
+      13%  { transform: scale(1) }
+      80%  { opacity: 1; transform: scale(1) }
+      92%  { opacity: 0; transform: scale(.8) }
+      100% { opacity: 0; transform: scale(.4) rotate(-8deg) }
+    }
+    /* Glyphs build early in the tile's life and retract before it folds, so the loop wrap never shows a finished glyph on a fresh tile. */
+    @keyframes ln  { 0%,10% { transform: scaleX(0) } 24%,60% { transform: scaleX(1) } 68%,100% { transform: scaleX(0) } }
+    @keyframes bar { 0%,10% { transform: scaleY(0) } 26%,60% { transform: scaleY(1) } 68%,100% { transform: scaleY(0) } }
+    @keyframes cell{ 0%,10% { transform: scale(0) } 22%,60% { transform: scale(1) } 68%,100% { transform: scale(0) } }
+    @keyframes pg  { 0%,10% { stroke-dashoffset: 100 } 30%,60% { stroke-dashoffset: 0 } 68%,100% { stroke-dashoffset: 100 } }
+    @keyframes halo{ 0%,6% { opacity: 0; transform: scale(.6) } 14% { opacity: .5 } 30%,100% { opacity: 0; transform: scale(1.5) } }
+    .halo { transform-box: fill-box; transform-origin: center; opacity: 0; }
+  </style>
+
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#2d4f6e"/>
+
+  <g class="float">
+    <!-- Docs: top left, blue -->
+    <g transform="translate(91 91)">
+      <rect class="halo" style="--d:0s" width="150" height="150" rx="36" fill="none" stroke="#3f5fe0" stroke-width="4"/>
+      <g class="tile" style="--d:0s">
+        <rect width="150" height="150" rx="36" fill="#3f5fe0"/>
+        <g fill="#fff">
+          <rect class="ln" style="--d:.45s"  x="32" y="34" width="86" height="10" rx="5"/>
+          <rect class="ln" style="--d:.6s"   x="32" y="56" width="62" height="10" rx="5" opacity=".85"/>
+          <rect class="ln" style="--d:.75s"  x="32" y="78" width="74" height="10" rx="5" opacity=".85"/>
+          <rect class="ln" style="--d:.9s"   x="32" y="100" width="40" height="10" rx="5" opacity=".85"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- Slides: top right, orange -->
+    <g transform="translate(271 91)">
+      <rect class="halo" style="--d:.5s" width="150" height="150" rx="36" fill="none" stroke="#f07a1e" stroke-width="4"/>
+      <g class="tile" style="--d:.5s">
+        <rect width="150" height="150" rx="36" fill="#f07a1e"/>
+        <g fill="#fff">
+          <rect class="ln"  style="--d:.95s" x="34" y="28" width="50" height="9" rx="4.5"/>
+          <rect class="bar" style="--d:1.05s" x="34" y="76" width="26" height="36" rx="6" opacity=".85"/>
+          <rect class="bar" style="--d:1.2s"  x="62" y="50" width="26" height="62" rx="6"/>
+          <rect class="bar" style="--d:1.35s" x="90" y="64" width="26" height="48" rx="6" opacity=".85"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- Sheets: bottom left, green -->
+    <g transform="translate(91 271)">
+      <rect class="halo" style="--d:1s" width="150" height="150" rx="36" fill="none" stroke="#1f9d55" stroke-width="4"/>
+      <g class="tile" style="--d:1s">
+        <rect width="150" height="150" rx="36" fill="#1f9d55"/>
+        <g fill="#fff">
+          <rect class="cell" style="--d:1.45s" x="32" y="34" width="26" height="22" rx="5"/>
+          <rect class="cell" style="--d:1.52s" x="64" y="34" width="26" height="22" rx="5"/>
+          <rect class="cell" style="--d:1.59s" x="96" y="34" width="26" height="22" rx="5"/>
+          <rect class="cell" style="--d:1.62s" x="32" y="62" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect class="cell" style="--d:1.69s" x="64" y="62" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect class="cell" style="--d:1.76s" x="96" y="62" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect class="cell" style="--d:1.79s" x="32" y="90" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect class="cell" style="--d:1.86s" x="64" y="90" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect class="cell" style="--d:1.93s" x="96" y="90" width="26" height="22" rx="5" fill-opacity=".7"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- PDF: bottom right, teal -->
+    <g transform="translate(271 271)">
+      <rect class="halo" style="--d:1.5s" width="150" height="150" rx="36" fill="none" stroke="#12a58a" stroke-width="4"/>
+      <g class="tile" style="--d:1.5s">
+        <rect width="150" height="150" rx="36" fill="#12a58a"/>
+        <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+          <path class="pg" style="--d:1.95s" pathLength="100" stroke-width="8"
+                d="M46 28 H86 L106 48 V122 H46 Z"/>
+          <path class="pg" style="--d:2.2s"  pathLength="100" stroke-width="8" d="M86 28 V48 H106"/>
+          <path class="ln" style="--d:2.4s"  stroke-width="7" opacity=".85" d="M60 78 H92"/>
+          <path class="ln" style="--d:2.55s" stroke-width="7" opacity=".85" d="M60 96 H80"/>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>
+    <p>Loading OfficeCraft&hellip;</p>
+  </div>
+</body>
+</html>

@@ -1130,6 +1130,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-ui"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d#d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1281,8 +1289,8 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
 name = "deckcraft-anim"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-geom",
  "deckcraft-model",
@@ -1291,8 +1299,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-av1"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1301,21 +1309,21 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-bitstream"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 
 [[package]]
 name = "deckcraft-color"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "deckcraft-engine"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
@@ -1327,6 +1335,7 @@ dependencies = [
  "deckcraft-pptx",
  "deckcraft-render",
  "deckcraft-text",
+ "equashion-math",
  "i_overlay",
  "image",
  "log",
@@ -1337,8 +1346,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-fonts"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "epaint_default_fonts",
  "harfrust 0.13.3",
@@ -1350,8 +1359,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-format"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-model",
  "serde",
@@ -1362,8 +1371,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-geom"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "kurbo 0.13.1",
  "serde",
@@ -1371,8 +1380,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-h264"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1381,8 +1390,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-hevc"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1391,8 +1400,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-isobmff"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-bitstream",
  "thiserror 2.0.21",
@@ -1400,13 +1409,13 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-matroska"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 
 [[package]]
 name = "deckcraft-mcp"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-render",
@@ -1416,8 +1425,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-media"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-av1",
  "deckcraft-h264",
@@ -1435,8 +1444,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-model"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
@@ -1447,18 +1456,18 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ogg"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 
 [[package]]
 name = "deckcraft-opus"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 
 [[package]]
 name = "deckcraft-pdf"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-fonts",
  "deckcraft-model",
@@ -1473,12 +1482,13 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-pptx"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
  "deckcraft-model",
+ "equashion-math",
  "log",
  "quick-xml 0.38.4",
  "thiserror 2.0.21",
@@ -1487,8 +1497,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-render"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
@@ -1504,14 +1514,17 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-text"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "chrono",
  "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
+ "equashion-layout",
+ "equashion-math",
+ "kurbo 0.13.1",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-segmentation",
@@ -1519,8 +1532,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ui-egui"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-anim",
  "deckcraft-color",
@@ -1532,6 +1545,7 @@ dependencies = [
  "deckcraft-render",
  "deckcraft-text",
  "egui",
+ "equashion-egui",
  "js-sys",
  "log",
  "serde",
@@ -1541,8 +1555,8 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-vp9"
-version = "0.6.0"
-source = "git+https://github.com/storytold/deckcraft#0ec0cc5e815caea982a7deec51bc437f3ba187ad"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#c36ddcaa93055daee31facc0fddae31ecee2c67d"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1802,7 +1816,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.36.2"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2009,6 +2023,59 @@ name = "epaint_default_fonts"
 version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773fa9c96dd0dbef887e39d0ed6177f141cce4d68e6041df77570aa3702dfa13"
+
+[[package]]
+name = "equashion-egui"
+version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+dependencies = [
+ "egui",
+ "equashion-layout",
+ "equashion-math",
+ "equashion-render",
+]
+
+[[package]]
+name = "equashion-font"
+version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+dependencies = [
+ "harfrust 0.13.3",
+ "kurbo 0.13.1",
+ "log",
+ "skrifa 0.47.0",
+ "unicode-bidi",
+]
+
+[[package]]
+name = "equashion-layout"
+version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+dependencies = [
+ "equashion-font",
+ "equashion-math",
+ "kurbo 0.13.1",
+]
+
+[[package]]
+name = "equashion-math"
+version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+dependencies = [
+ "quick-xml 0.38.4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "equashion-render"
+version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+dependencies = [
+ "equashion-layout",
+ "kurbo 0.13.1",
+ "vello_cpu 0.2.0",
+]
 
 [[package]]
 name = "equator"
@@ -2533,8 +2600,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-calc"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2546,8 +2613,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-chart"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-core",
@@ -2558,8 +2625,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-core"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "js-sys",
  "serde",
@@ -2568,8 +2635,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-engine"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-calc",
  "gridcraft-chart",
@@ -2589,8 +2656,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-formula"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "serde",
@@ -2599,8 +2666,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-functions"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "regex",
@@ -2608,8 +2675,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-mcp"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-engine",
  "log",
@@ -2618,8 +2685,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-model"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
@@ -2630,22 +2697,23 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-numfmt"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "gridcraft-core",
 ]
 
 [[package]]
 name = "gridcraft-pdf"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 
 [[package]]
 name = "gridcraft-ui-egui"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
+ "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d)",
  "egui",
  "gridcraft-chart",
  "gridcraft-engine",
@@ -2662,8 +2730,8 @@ dependencies = [
 
 [[package]]
 name = "gridcraft-xlsx"
-version = "0.6.0"
-source = "git+https://github.com/storytold/gridcraft#b3acae6b7782ea236d0fb87a0121fd1ba2e14c2b"
+version = "0.6.1"
+source = "git+https://github.com/storytold/gridcraft#fc45b7f6d8ab79ef20f74e3c8347a2fd731e6af5"
 dependencies = [
  "aes",
  "gridcraft-core",
@@ -2764,7 +2832,7 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -2794,7 +2862,7 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -2812,7 +2880,7 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -2836,7 +2904,7 @@ checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -3415,7 +3483,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "lopdf"
 version = "0.45.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "aes",
  "bitflags 2.13.2",
@@ -4008,11 +4076,16 @@ dependencies = [
  "gridcraft-engine",
  "gridcraft-mcp",
  "gridcraft-ui-egui",
+ "js-sys",
  "log",
  "pdfcraft-ui-egui",
  "rfd",
  "serde_json",
  "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "wordcraft-doc",
  "wordcraft-engine",
  "wordcraft-mcp",
@@ -4169,8 +4242,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-a11y"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4181,8 +4254,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-annot"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
  "pdfcraft-fonts",
@@ -4192,8 +4265,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-audit"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4204,21 +4277,21 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-compare"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 
 [[package]]
 name = "pdfcraft-content"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
 ]
 
 [[package]]
 name = "pdfcraft-cos"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-crypt",
  "pdfcraft-filters",
@@ -4227,8 +4300,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-create"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "encoding_rs",
  "image",
@@ -4242,8 +4315,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-crypt"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "aes",
  "md-5",
@@ -4254,8 +4327,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-edit"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "kurbo 0.13.1",
  "pdfcraft-annot",
@@ -4269,8 +4342,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-engine"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "chrono",
  "icu_properties",
@@ -4307,16 +4380,16 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-export"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "flate2",
 ]
 
 [[package]]
 name = "pdfcraft-filters"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "flate2",
  "thiserror 2.0.21",
@@ -4324,8 +4397,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-fonts"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "harfrust 0.12.0",
  "pdfcraft-cos",
@@ -4335,8 +4408,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-forms"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4347,21 +4420,21 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-geom"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 
 [[package]]
 name = "pdfcraft-js"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "boa_engine",
 ]
 
 [[package]]
 name = "pdfcraft-measure"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-content",
@@ -4373,16 +4446,16 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-model"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
 ]
 
 [[package]]
 name = "pdfcraft-ocr"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "ocrs",
  "pdfcraft-fonts",
@@ -4392,8 +4465,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-optimize"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "image",
  "pdfcraft-annot",
@@ -4405,8 +4478,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-organize"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-content",
  "pdfcraft-cos",
@@ -4415,8 +4488,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-platform"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "async-channel",
  "futures-lite",
@@ -4425,8 +4498,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-preflight"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-cos",
  "pdfcraft-model",
@@ -4434,8 +4507,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-print"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "craft-print",
  "pdfcraft-content",
@@ -4446,8 +4519,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-redact"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-content",
@@ -4461,8 +4534,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-render"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "bytemuck",
  "getrandom 0.4.3",
@@ -4479,8 +4552,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-sign"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "aes",
  "aws-lc-rs",
@@ -4514,13 +4587,13 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-ui-egui"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "arboard",
  "base64 0.22.1",
  "bytemuck",
- "craft-ui",
+ "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=5c874d51eeb3de70e735c8ce87a59a7dedd47675)",
  "eframe",
  "egui",
  "egui_extras",
@@ -4553,8 +4626,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-xfa"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -4568,8 +4641,8 @@ dependencies = [
 
 [[package]]
 name = "pdfcraft-xfdf"
-version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+version = "0.7.1"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "pdfcraft-annot",
  "pdfcraft-cos",
@@ -6239,10 +6312,7 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
- "js-sys",
  "libc",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
@@ -7590,7 +7660,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/storytold/pdfcraft#87b448b664e1b3c960b479cc0f2c2e7a82c7ac71"
+source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "ahash",
  "android-activity",
@@ -7672,13 +7742,13 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-control-key"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 
 [[package]]
 name = "wordcraft-doc"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "serde",
  "serde_json",
@@ -7689,13 +7759,11 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-docbin"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "cfb",
- "image",
  "log",
- "miniz_oxide 0.8.9",
  "thiserror 2.0.21",
  "wordcraft-doc",
  "wordcraft-geom",
@@ -7703,8 +7771,8 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-docx"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -7724,9 +7792,10 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-engine"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
+ "equashion-math",
  "image",
  "js-sys",
  "log",
@@ -7750,22 +7819,20 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-fonts"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
  "log",
  "skrifa 0.47.0",
  "unicode-bidi",
- "unicode-script",
- "wuff",
 ]
 
 [[package]]
 name = "wordcraft-formats"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "image",
  "log",
@@ -7777,18 +7844,19 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-geom"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "wordcraft-layout"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
- "image",
+ "equashion-layout",
+ "equashion-math",
  "js-sys",
  "kurbo 0.13.1",
  "log",
@@ -7798,6 +7866,7 @@ dependencies = [
  "unicode-linebreak",
  "unicode-segmentation",
  "wordcraft-doc",
+ "wordcraft-docx",
  "wordcraft-fonts",
  "wordcraft-geom",
  "wordcraft-proof",
@@ -7805,8 +7874,8 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-mcp"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "log",
  "serde_json",
@@ -7818,8 +7887,8 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-metafile"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "kurbo 0.13.1",
  "thiserror 2.0.21",
@@ -7827,8 +7896,8 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-pdf"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "image",
  "js-sys",
@@ -7845,8 +7914,8 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-proof"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "log",
  "miniz_oxide 0.8.9",
@@ -7854,8 +7923,8 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-render"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "image",
  "log",
@@ -7869,10 +7938,11 @@ dependencies = [
 
 [[package]]
 name = "wordcraft-ui-egui"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "egui",
+ "equashion-egui",
  "image",
  "js-sys",
  "log",
@@ -7887,13 +7957,12 @@ dependencies = [
  "wordcraft-layout",
  "wordcraft-render",
  "wordcraft-zotero",
- "zbus",
 ]
 
 [[package]]
 name = "wordcraft-zotero"
-version = "0.6.0"
-source = "git+https://github.com/storytold/wordcraft#5383d80f753fbd14e525c307fadf840900a541d4"
+version = "0.5.0"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#454b556f1534f8726fcc04e1cbe02570d5b1d5cb"
 dependencies = [
  "log",
  "serde_json",
@@ -7927,17 +7996,6 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
-
-[[package]]
-name = "wuff"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "200a7b806377b65f1ff9a985874332f15357c87e5dd7855f35f06dade95b8b3d"
-dependencies = [
- "brotli-decompressor",
- "bytes",
- "flate2",
-]
 
 [[package]]
 name = "x11-dl"

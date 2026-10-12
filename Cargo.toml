@@ -7,26 +7,39 @@ license = "Apache-2.0"
 description = "One tabbed window for WordCraft, GridCraft, DeckCraft, PdfCraft"
 
 [dependencies]
-# The four apps' egui front ends and agent tool sets. These resolve from the org repos; to build
+# The four apps' egui front ends and agent tool sets. WordCraft and DeckCraft come from the
+# shuff57 forks (they carry `context_changed`); GridCraft and PdfCraft from the org repos. To build
 # against sibling checkouts instead, run scripts/use-local-siblings.sh (writes a git-ignored
 # .cargo/config.toml with [patch] entries).
-wordcraft-doc = { git = "https://github.com/storytold/wordcraft" }
-wordcraft-engine = { git = "https://github.com/storytold/wordcraft" }
-wordcraft-ui-egui = { git = "https://github.com/storytold/wordcraft" }
-wordcraft-mcp = { git = "https://github.com/storytold/wordcraft" }
+wordcraft-doc = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
+wordcraft-engine = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
+wordcraft-ui-egui = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
+wordcraft-mcp = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
 gridcraft-engine = { git = "https://github.com/storytold/gridcraft" }
 gridcraft-ui-egui = { git = "https://github.com/storytold/gridcraft" }
 gridcraft-mcp = { git = "https://github.com/storytold/gridcraft" }
-deckcraft-engine = { git = "https://github.com/storytold/deckcraft" }
-deckcraft-ui-egui = { git = "https://github.com/storytold/deckcraft" }
-deckcraft-mcp = { git = "https://github.com/storytold/deckcraft" }
+deckcraft-engine = { git = "https://github.com/shuff57/deckcraft", branch = "equashion-editor" }
+deckcraft-ui-egui = { git = "https://github.com/shuff57/deckcraft", branch = "equashion-editor" }
+deckcraft-mcp = { git = "https://github.com/shuff57/deckcraft", branch = "equashion-editor" }
 pdfcraft-ui-egui = { git = "https://github.com/storytold/pdfcraft" }
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
 egui = "0.36"
 rfd = "0.17"
 log = "0.4"
 serde_json = "1"
+# `Instant::now()` panics on wasm32; this is std's own clock natively and the browser's in a page.
+web-time = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["wayland", "x11"] }
+# The assistant's blocking HTTP client; the browser build uses `fetch` instead.
 ureq = "3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "HtmlIFrameElement", "Blob", "BlobPropertyBag", "Url", "Location", "CssStyleDeclaration", "Event", "EventTarget", "BeforeUnloadEvent", "Storage", "Headers", "Request", "RequestInit", "RequestMode", "Response", "AbortSignal", "ReadableStream", "ReadableStreamDefaultReader", "Clipboard", "ClipboardItem", "Navigator", "Performance", "MediaQueryList"] }
 
 # pdfcraft builds against its vendored forks; cargo ignores [patch] from dependencies, so the
 # suite shell repeats them or pdfcraft-render sees stock hayro and fails to compile.

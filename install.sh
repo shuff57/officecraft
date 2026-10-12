@@ -38,6 +38,8 @@ for size in 64 128 256 512; do
   install -Dm644 "assets/app-icon/hicolor/${size}x${size}/apps/ai.storyteller.officecraft.png" \
     "$prefix/share/icons/hicolor/${size}x${size}/apps/ai.storyteller.officecraft.png"
 done
+install -Dm644 "assets/app-icon/hicolor/scalable/apps/ai.storyteller.officecraft.svg" \
+  "$prefix/share/icons/hicolor/scalable/apps/ai.storyteller.officecraft.svg"
 command -v update-desktop-database >/dev/null && update-desktop-database "$prefix/share/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$prefix/share/icons/hicolor" || true
 mkdir -p "${XDG_DATA_HOME:-$HOME/.local/share}/officecraft"
