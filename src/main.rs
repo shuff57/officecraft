@@ -6,8 +6,16 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use eframe::egui;
+#[cfg(target_arch = "wasm32")]
+use web::{deck_services, grid_services, word_services};
+
+/// Files read asynchronously in a browser page (picker, drag and drop): (name, bytes).
+type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
 mod ai;
+mod platform;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -37,6 +45,7 @@ enum Tab {
     Pdf(Box<pdfcraft_ui_egui::PdfCraftApp>),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn word_services() -> wordcraft_ui_egui::Services {
     wordcraft_ui_egui::Services {
         pick_open: Some(Box::new(|purpose: &str| {
@@ -53,6 +62,7 @@ fn word_services() -> wordcraft_ui_egui::Services {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn grid_services() -> gridcraft_ui_egui::Services {
     gridcraft_ui_egui::Services {
         pick_open: Some(Box::new(|| {
@@ -74,6 +84,7 @@ fn grid_services() -> gridcraft_ui_egui::Services {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn deck_services() -> deckcraft_ui_egui::Services {
     deckcraft_ui_egui::Services {
         pick_open: Some(Box::new(|_purpose: &str| {
@@ -158,25 +169,12 @@ const OPEN_EXTS: &[&str] = &[
 ];
 const MAX_RECENT: usize = 12;
 
-fn recent_file() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
-    Some(base.join("officecraft").join("recent.txt"))
-}
-
 fn load_recent() -> Vec<String> {
-    let Some(p) = recent_file() else { return Vec::new() };
-    std::fs::read_to_string(p).map(|s| s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+    platform::read_lines("recent.txt")
 }
 
 fn save_recent(list: &[String]) {
-    if let Some(p) = recent_file() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, list.join("\n"));
-    }
+    platform::write_lines("recent.txt", list);
 }
 
 impl Tab {
@@ -201,6 +199,22 @@ impl Tab {
         }
     }
 
+    /// Web: hands a picked or dropped file's bytes to the app, which opens them on its next frame.
+    #[cfg(target_arch = "wasm32")]
+    fn deliver(&mut self, name: &str, bytes: Vec<u8>) {
+        let push = |inbox: Option<&Inbox>| {
+            if let Some(i) = inbox {
+                i.lock().unwrap_or_else(|e| e.into_inner()).push((name.to_string(), bytes.clone()));
+            }
+        };
+        match self {
+            Tab::Word(a) => push(a.services.inbox.as_ref()),
+            Tab::Grid(a) => push(a.services.inbox.as_ref()),
+            Tab::Deck(a) => push(a.services.inbox.as_ref()),
+            Tab::Pdf(a) => push(Some(&a.startup_inbox)),
+        }
+    }
+
     fn open(&mut self, path: &str) -> Result<(), String> {
         match self {
             Tab::Word(a) => a.run("file.open", serde_json::json!({"path": path})).map(|_| ()),
@@ -209,10 +223,14 @@ impl Tab {
                 Ok(())
             }
             Tab::Deck(a) => a.open_path(path),
+            #[cfg(not(target_arch = "wasm32"))]
             Tab::Pdf(a) => {
                 a.open_path(path);
                 Ok(())
             }
+            // A page has no paths; files arrive through `deliver`.
+            #[cfg(target_arch = "wasm32")]
+            Tab::Pdf(_) => Err("opening by path is not available in the browser".into()),
         }
     }
 }
@@ -286,22 +304,12 @@ fn list_folder(dir: &str) -> Vec<Row> {
     rows
 }
 
-fn folders_file() -> Option<std::path::PathBuf> {
-    recent_file().map(|p| p.with_file_name("folders.txt"))
-}
-
 fn load_folders() -> Vec<String> {
-    let Some(p) = folders_file() else { return Vec::new() };
-    std::fs::read_to_string(p).map(|s| s.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+    platform::read_lines("folders.txt")
 }
 
 fn save_folders(list: &[String]) {
-    if let Some(p) = folders_file() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, list.join("\n"));
-    }
+    platform::write_lines("folders.txt", list);
 }
 
 fn kind_color(kind: Option<Kind>) -> egui::Color32 {
@@ -468,18 +476,12 @@ fn framed() -> egui::Frame {
     egui::Frame::new().fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(10.0)
 }
 
-fn home_view_file() -> Option<std::path::PathBuf> {
-    recent_file().map(|p| p.with_file_name("homeview.txt"))
-}
-
 fn load_home_grid() -> bool {
-    home_view_file().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| s.trim() != "list").unwrap_or(true)
+    platform::read("homeview.txt").map(|s| s.trim() != "list").unwrap_or(true)
 }
 
 fn save_home_grid(grid: bool) {
-    if let Some(p) = home_view_file() {
-        let _ = std::fs::write(p, if grid { "grid" } else { "list" });
-    }
+    let _ = platform::write("homeview.txt", if grid { "grid" } else { "list" });
 }
 
 /// A small drawn preview of what the file is, centred in `area`. No file is opened to make it.
@@ -547,29 +549,19 @@ fn human_size(n: u64) -> String {
     }
 }
 
-fn session_file() -> Option<std::path::PathBuf> {
-    recent_file().map(|p| p.with_file_name("session.txt"))
-}
-
 /// Marks that Home, not a file, was showing when the session was saved.
 const HOME_MARK: &str = "#home";
 
 /// Files that were open last time (the active one last), and whether Home was showing.
 fn load_session() -> (Vec<String>, bool) {
-    let Some(p) = session_file() else { return (Vec::new(), false) };
-    let text = std::fs::read_to_string(p).unwrap_or_default();
+    let text = platform::read("session.txt").unwrap_or_default();
     let home = text.lines().any(|l| l == HOME_MARK);
     let files = text.lines().filter(|l| !l.is_empty() && *l != HOME_MARK && std::path::Path::new(l).is_file()).map(str::to_string).collect();
     (files, home)
 }
 
 fn save_session(lines: &[String]) {
-    if let Some(p) = session_file() {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(p, lines.join("\n"));
-    }
+    platform::write_lines("session.txt", lines);
 }
 
 struct Suite {
@@ -607,6 +599,9 @@ struct Suite {
     shot_sent: bool,
     home_styled: bool,
     folder_counts: Vec<usize>,
+    /// Files the browser delivered (Open file, drag and drop), each opened in its own tab.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    inbox: Inbox,
 }
 
 impl Suite {
@@ -623,7 +618,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new() };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), inbox: Inbox::default() };
         suite.recount();
         suite
     }
@@ -690,6 +685,22 @@ impl Suite {
                 self.notice = Some(format!("{path}: {e}"));
             }
         }
+        ctx.request_repaint();
+    }
+
+    /// Web: opens a file the browser delivered in its own tab. There is no path, so no recent entry.
+    #[cfg(target_arch = "wasm32")]
+    fn open_bytes(&mut self, ctx: &egui::Context, name: String, bytes: Vec<u8>) {
+        let Some(kind) = kind_for(&name) else {
+            self.notice = Some(format!("No Craft app opens {name}"));
+            return;
+        };
+        let id = self.push_tab(kind, Tab::create(kind));
+        if let Some(e) = self.entry_mut(id) {
+            e.tab.deliver(&name, bytes);
+            e.name = name;
+        }
+        self.notice = None;
         ctx.request_repaint();
     }
 
@@ -816,6 +827,9 @@ impl Suite {
                 if side_row(ui, self.folder_sel.is_none(), false, "Recent", Some(self.recent.len()), false).0.clicked() {
                     select = Some(None);
                 }
+                // A page has no folders to browse; only files it was given.
+                let folders_ui = !cfg!(target_arch = "wasm32");
+                if folders_ui {
                 ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
@@ -846,6 +860,7 @@ impl Suite {
                 p.text(rect.left_center() + egui::vec2(36.0, 0.0), egui::Align2::LEFT_CENTER, "Add folder", egui::FontId::new(14.0, bold()), ACCENT);
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     add_folder = true;
+                }
                 }
             });
 
@@ -970,7 +985,7 @@ impl Suite {
 
             if rows.is_empty() {
                 ui.add_space(24.0);
-                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { "Files you open appear here. Drop a file on the window, or press Open file." }).color(MUTED));
+                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { if cfg!(target_arch = "wasm32") { "Press Open file or drop a file on the page. Files stay in your browser; Save downloads a copy." } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
             } else if want_grid {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     let gap = 16.0;
@@ -1059,6 +1074,7 @@ impl Suite {
             self.folder_rows.clear();
             self.recount();
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if add_folder && let Some(dir) = rfd::FileDialog::new().pick_folder() {
             let dir = dir.to_string_lossy().to_string();
             if !self.folders.contains(&dir) {
@@ -1070,11 +1086,18 @@ impl Suite {
             self.folder_sel = i;
             self.folder_rows = list_folder(&dir);
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if pick_files && let Some(p) = rfd::FileDialog::new().add_filter("Office files", OPEN_EXTS).pick_files() {
             // Several files at once each get their own tab.
             self.pending.extend(p.iter().map(|f| f.to_string_lossy().to_string()));
             ctx.request_repaint();
         }
+        #[cfg(target_arch = "wasm32")]
+        if pick_files {
+            web::pick_files(OPEN_EXTS, self.inbox.clone());
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = add_folder;
         if let Some(k) = new {
             self.new_tab(k);
             ctx.request_repaint();
@@ -1239,6 +1262,14 @@ impl eframe::App for Suite {
         for p in std::mem::take(&mut self.pending) {
             self.open_file(ctx, &p);
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            web::set_dirty(self.entries.iter().any(|e| e.tab.is_dirty()));
+            let arrived = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
+            for (name, bytes) in arrived {
+                self.open_bytes(ctx, name, bytes);
+            }
+        }
         if self.restore_home && self.pending.is_empty() {
             self.view = View::Home;
             self.restore_home = false;
@@ -1270,6 +1301,12 @@ impl eframe::App for Suite {
         // else (a picture dropped on a document) stays for the active app.
         let mut keep = Vec::new();
         for f in std::mem::take(&mut raw.dropped_files) {
+            // A browser hands over a name and reads the bytes asynchronously.
+            #[cfg(target_arch = "wasm32")]
+            if let Some(name) = f.path().file_name().map(|n| n.to_string_lossy().to_string()).filter(|n| kind_for(n).is_some()) {
+                web::read_dropped(f, name, self.inbox.clone(), ctx.clone());
+                continue;
+            }
             match f.path().to_str().filter(|p| kind_for(p).is_some()) {
                 Some(p) => self.pending.push(p.to_string()),
                 None => keep.push(f),
@@ -1450,6 +1487,12 @@ impl eframe::App for Suite {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    web::start();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
