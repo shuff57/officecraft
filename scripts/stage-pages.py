@@ -34,7 +34,11 @@ def main(src: pathlib.Path, out: pathlib.Path) -> None:
     # Only what the page references: dist/web also keeps older hashed builds.
     for name in set(re.findall(r'href="\./([^"]+)"', html)) | {js.group(1)}:
         if name != wasm_name:
+            (out / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src / name, out / name)
+    # wasm-bindgen snippets (JS helpers some crates bring) are imported by the loader script.
+    if (src / "snippets").is_dir():
+        shutil.copytree(src / "snippets", out / "snippets", dirs_exist_ok=True)
 
     data = (src / wasm_name).read_bytes()
     n = math.ceil(len(data) / PART_LIMIT)
@@ -69,8 +73,9 @@ def main(src: pathlib.Path, out: pathlib.Path) -> None:
         "/*.js\n  Cache-Control: public, max-age=31536000, immutable\n"
         "/*.wasm\n  Cache-Control: public, max-age=31536000, immutable\n"
     )
-    total = sum(f.stat().st_size for f in out.iterdir())
-    print(f"staged {len(list(out.iterdir()))} files, {total / 1e6:.1f} MB, wasm in {n} parts -> {out}")
+    files = [f for f in out.rglob("*") if f.is_file()]
+    total = sum(f.stat().st_size for f in files)
+    print(f"staged {len(files)} files, {total / 1e6:.1f} MB, wasm in {n} parts -> {out}")
 
 
 if __name__ == "__main__":
