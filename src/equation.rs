@@ -87,25 +87,23 @@ impl EquationApp {
             self.note = None;
         }
         let fill = ui.visuals().panel_fill;
-        egui::Panel::top("officecraft_equations_bar").frame(egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(12, 8))).show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(egui::RichText::new("equaSHion").strong().size(16.0));
-                ui.add_space(8.0);
-                for kind in Export::ALL {
-                    if ui.button(kind.label()).on_hover_text(kind.hint()).clicked() {
-                        self.export(ui.ctx(), kind, now);
-                    }
-                }
-            });
-            if let Some((text, _)) = &self.note {
-                ui.label(egui::RichText::new(text).weak().size(12.5));
-            } else {
-                ui.label(egui::RichText::new("Type x^2, a/b, \\frac, \\sqrt, \\alpha, or pick a structure below. Enter and Esc work as in the page.").weak().size(12.5));
-            }
-        });
         egui::CentralPanel::default().frame(egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(16, 12))).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.label(egui::RichText::new("equaSHion").strong().size(16.0));
+                ui.add_space(6.0);
                 self.editor.show(ui);
+                // The Copy and Save buttons sit under the editor, with what the last one did.
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    for kind in Export::ALL {
+                        if ui.button(kind.label()).on_hover_text(kind.hint()).clicked() {
+                            self.export(ui.ctx(), kind, now);
+                        }
+                    }
+                });
+                if let Some((text, _)) = &self.note {
+                    ui.label(egui::RichText::new(text).weak().size(12.5));
+                }
             });
         });
     }
