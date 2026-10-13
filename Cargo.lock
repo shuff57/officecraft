@@ -1290,7 +1290,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 [[package]]
 name = "deckcraft-anim"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-geom",
  "deckcraft-model",
@@ -1300,7 +1300,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-av1"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1310,12 +1310,12 @@ dependencies = [
 [[package]]
 name = "deckcraft-bitstream"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 
 [[package]]
 name = "deckcraft-color"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "serde",
 ]
@@ -1323,7 +1323,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-engine"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
@@ -1347,7 +1347,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-fonts"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "epaint_default_fonts",
  "harfrust 0.13.3",
@@ -1360,7 +1360,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-format"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-model",
  "serde",
@@ -1372,7 +1372,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-geom"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "kurbo 0.13.1",
  "serde",
@@ -1381,7 +1381,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-h264"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1391,7 +1391,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-hevc"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1401,7 +1401,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-isobmff"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-bitstream",
  "thiserror 2.0.21",
@@ -1410,12 +1410,12 @@ dependencies = [
 [[package]]
 name = "deckcraft-matroska"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 
 [[package]]
 name = "deckcraft-mcp"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-render",
@@ -1426,7 +1426,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-media"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-av1",
  "deckcraft-h264",
@@ -1445,7 +1445,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-metafile"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "kurbo 0.13.1",
  "thiserror 2.0.21",
@@ -1454,7 +1454,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-model"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
@@ -1467,17 +1467,17 @@ dependencies = [
 [[package]]
 name = "deckcraft-ogg"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 
 [[package]]
 name = "deckcraft-opus"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 
 [[package]]
 name = "deckcraft-pdf"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-fonts",
  "deckcraft-model",
@@ -1493,7 +1493,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-pptx"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
@@ -1508,7 +1508,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-render"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-anim",
  "deckcraft-color",
@@ -1528,7 +1528,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-text"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "chrono",
  "deckcraft-color",
@@ -1546,7 +1546,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-ui-egui"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-anim",
  "deckcraft-color",
@@ -1569,7 +1569,7 @@ dependencies = [
 [[package]]
 name = "deckcraft-vp9"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#44fe1eb9e1a4ed1a7b08b314579cdea3a5c2386d"
+source = "git+https://github.com/shuff57/deckcraft?branch=equashion-editor#91e61e05b8d7cee6cbaf6921e8d26917c248d9dd"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -2040,7 +2040,7 @@ checksum = "773fa9c96dd0dbef887e39d0ed6177f141cce4d68e6041df77570aa3702dfa13"
 [[package]]
 name = "equashion-egui"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+source = "git+https://github.com/shuff57/equaSHion?rev=74eb54e9e0c82703377360c35dd2cf71a68af3ae#74eb54e9e0c82703377360c35dd2cf71a68af3ae"
 dependencies = [
  "egui",
  "equashion-layout",
@@ -2051,7 +2051,7 @@ dependencies = [
 [[package]]
 name = "equashion-font"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+source = "git+https://github.com/shuff57/equaSHion?rev=74eb54e9e0c82703377360c35dd2cf71a68af3ae#74eb54e9e0c82703377360c35dd2cf71a68af3ae"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
@@ -2063,7 +2063,7 @@ dependencies = [
 [[package]]
 name = "equashion-layout"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+source = "git+https://github.com/shuff57/equaSHion?rev=74eb54e9e0c82703377360c35dd2cf71a68af3ae#74eb54e9e0c82703377360c35dd2cf71a68af3ae"
 dependencies = [
  "equashion-font",
  "equashion-math",
@@ -2073,7 +2073,7 @@ dependencies = [
 [[package]]
 name = "equashion-math"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+source = "git+https://github.com/shuff57/equaSHion?rev=74eb54e9e0c82703377360c35dd2cf71a68af3ae#74eb54e9e0c82703377360c35dd2cf71a68af3ae"
 dependencies = [
  "quick-xml 0.38.4",
  "serde",
@@ -2083,7 +2083,7 @@ dependencies = [
 [[package]]
 name = "equashion-render"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=ee62762d8b57edbdb42f5055eaed7e9164a3e3fa#ee62762d8b57edbdb42f5055eaed7e9164a3e3fa"
+source = "git+https://github.com/shuff57/equaSHion?rev=74eb54e9e0c82703377360c35dd2cf71a68af3ae#74eb54e9e0c82703377360c35dd2cf71a68af3ae"
 dependencies = [
  "equashion-layout",
  "kurbo 0.13.1",
@@ -2123,7 +2123,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5526,7 +5526,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6353,7 +6353,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6650,7 +6650,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7395,7 +7395,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7759,12 +7759,12 @@ dependencies = [
 [[package]]
 name = "wordcraft-control-key"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 
 [[package]]
 name = "wordcraft-doc"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "serde",
  "serde_json",
@@ -7776,7 +7776,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-docbin"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "cfb",
  "image",
@@ -7790,7 +7790,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-docx"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -7811,7 +7811,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-engine"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "equashion-math",
  "image",
@@ -7838,7 +7838,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-fonts"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
@@ -7852,7 +7852,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-formats"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "image",
  "log",
@@ -7865,7 +7865,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-geom"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "serde",
 ]
@@ -7873,7 +7873,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-layout"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "equashion-layout",
  "equashion-math",
@@ -7896,7 +7896,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-mcp"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "log",
  "serde_json",
@@ -7909,7 +7909,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-metafile"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "kurbo 0.13.1",
  "thiserror 2.0.21",
@@ -7918,7 +7918,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-pdf"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "image",
  "js-sys",
@@ -7936,7 +7936,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-proof"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "log",
  "miniz_oxide 0.8.9",
@@ -7945,7 +7945,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-render"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "image",
  "log",
@@ -7960,7 +7960,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-ui-egui"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d)",
  "egui",
@@ -7985,7 +7985,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-zotero"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#807c5339ecfe1f909a653569c5eaec976d42fbb6"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#3eb2ad76c81b68acd86bee045ca999efb850061d"
 dependencies = [
  "log",
  "serde_json",
