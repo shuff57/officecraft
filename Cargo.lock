@@ -2033,7 +2033,6 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.36.2"
-source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -3201,7 +3200,6 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -3231,7 +3229,6 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -3249,7 +3246,6 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -3273,7 +3269,6 @@ checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -3946,7 +3941,6 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "lopdf"
 version = "0.45.0"
-source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "aes",
  "bitflags 2.13.2",
@@ -7780,6 +7774,7 @@ dependencies = [
 name = "vishual-ui-egui"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "async-trait",
  "base64 0.23.1",
  "egui",
@@ -8978,7 +8973,6 @@ dependencies = [
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/storytold/pdfcraft#7163ba3dee8becfff6871c9a65d0d8314314742b"
 dependencies = [
  "ahash",
  "android-activity 0.6.1",
@@ -9692,3 +9686,331 @@ dependencies = [
  "syn 3.0.8",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "gridcraft-calc"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-chart"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-core"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-engine"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-formula"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-functions"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-mcp"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-model"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-numfmt"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-pdf"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-ui-egui"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-xlsx"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "pdfcraft-a11y"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-annot"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-audit"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-automation"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-compare"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-content"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-cos"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-create"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-crypt"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-edit"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-engine"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-export"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-filters"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-fonts"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-forms"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-geom"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-js"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-measure"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-model"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-ocr"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-optimize"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-organize"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-platform"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-preflight"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-print"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-redact"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-render"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-sign"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-ui-egui"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-xfa"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-xfdf"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "deckcraft-anim"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-av1"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-bitstream"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-color"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-engine"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-fonts"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-format"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-geom"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-h264"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-hevc"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-isobmff"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-matroska"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-mcp"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-media"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-model"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-ogg"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-opus"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-pdf"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-pptx"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-render"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-text"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-ui-egui"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-vp9"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-control-key"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-doc"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-docbin"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-docx"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-engine"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-fonts"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-formats"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-geom"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-layout"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-mcp"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-metafile"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-pdf"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-proof"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-render"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-ui-egui"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-zotero"
+version = "0.5.0"

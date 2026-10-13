@@ -365,6 +365,94 @@ impl TilePref {
 }
 
 /// Most tabs shown side by side.
+/// One column of the tiled view: its share of the width and the tiles stacked in it with their
+/// share of the height.
+#[derive(Clone)]
+struct TileCol {
+    w: f32,
+    rows: Vec<(u64, f32)>,
+}
+
+/// Where a dragged tile lands relative to the tile under the pointer.
+#[derive(Clone, Copy, PartialEq)]
+enum DropZone {
+    Swap,
+    Above,
+    Below,
+    ColBefore,
+    ColAfter,
+}
+
+/// Columns the window has room for: two on an ordinary screen, up to four on a super wide one.
+fn max_tile_cols(width: f32) -> usize {
+    ((width / 860.0).floor() as usize).clamp(2, 4)
+}
+
+fn equalize_rows(c: &mut TileCol) {
+    let n = c.rows.len().max(1) as f32;
+    for r in &mut c.rows {
+        r.1 = 1.0 / n;
+    }
+}
+
+fn renorm_rows(c: &mut TileCol) {
+    let sum: f32 = c.rows.iter().map(|r| r.1).sum();
+    if sum <= 0.01 {
+        equalize_rows(c);
+    } else {
+        for r in &mut c.rows {
+            r.1 /= sum;
+        }
+    }
+}
+
+fn equalize_cols(l: &mut [TileCol]) {
+    let n = l.len().max(1) as f32;
+    for c in l {
+        c.w = 1.0 / n;
+    }
+}
+
+fn renorm_cols(l: &mut [TileCol]) {
+    let sum: f32 = l.iter().map(|c| c.w).sum();
+    if sum <= 0.01 {
+        equalize_cols(l);
+    } else {
+        for c in l {
+            c.w /= sum;
+        }
+    }
+}
+
+/// The tile under `p` (other than the dragged one) and which part of it `p` is in.
+fn drop_target(rects: &[(u64, egui::Rect)], dragged: u64, p: egui::Pos2, room_for_column: bool) -> Option<(u64, DropZone, egui::Rect)> {
+    let (id, r) = rects.iter().find(|(id, r)| *id != dragged && r.contains(p))?;
+    let (u, v) = ((p.x - r.min.x) / r.width().max(1.0), (p.y - r.min.y) / r.height().max(1.0));
+    let zone = if room_for_column && u < 0.22 {
+        DropZone::ColBefore
+    } else if room_for_column && u > 0.78 {
+        DropZone::ColAfter
+    } else if v < 0.28 {
+        DropZone::Above
+    } else if v > 0.72 {
+        DropZone::Below
+    } else {
+        DropZone::Swap
+    };
+    Some((*id, zone, *r))
+}
+
+fn drop_hint_rect(r: egui::Rect, zone: DropZone) -> egui::Rect {
+    let (w, h) = (r.width(), r.height());
+    match zone {
+        DropZone::ColBefore => egui::Rect::from_min_size(r.min, egui::vec2(w * 0.22, h)),
+        DropZone::ColAfter => egui::Rect::from_min_size(egui::pos2(r.max.x - w * 0.22, r.min.y), egui::vec2(w * 0.22, h)),
+        DropZone::Above => egui::Rect::from_min_size(r.min, egui::vec2(w, h * 0.28)),
+        DropZone::Below => egui::Rect::from_min_size(egui::pos2(r.min.x, r.max.y - h * 0.28), egui::vec2(w, h * 0.28)),
+        DropZone::Swap => r,
+    }
+}
+
 const MAX_TILES: usize = 4;
 /// Frames an app has to run alone, installing its fonts and style, before the next one starts.
 const TILE_WARM_FRAMES: u8 = 3;
@@ -902,6 +990,13 @@ struct Suite {
     restyle: Option<Kind>,
     /// Tabs shown side by side, left to right. Fewer than two means not tiled.
     tiles: Vec<u64>,
+    tile_layout: Vec<TileCol>,
+    /// Where each tile was drawn last frame, and how many columns fit: drop targets for tab drags.
+    tile_rects: Vec<(u64, egui::Rect)>,
+    tile_max_cols: usize,
+    /// A tab being dragged out of the tab bar.
+    tab_drag: Option<u64>,
+    tile_test_out: Option<u64>,
     tile_pref: TilePref,
     /// A document was opened beside others and the visitor has not said whether to tile.
     tile_prompt: bool,
@@ -939,7 +1034,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite.recount();
         suite
     }
@@ -1005,6 +1100,46 @@ impl Suite {
         self.tile_warm.clear();
         self.tile_restores.clear();
         self.tile_prompt = false;
+    }
+
+    /// Removes a tile from the tiled view; its document stays open in its tab.
+    fn take_out_tile(&mut self, id: u64) {
+        self.tiles.retain(|t| *t != id);
+        if self.tiles.len() < 2 {
+            self.untile();
+        }
+    }
+
+    /// Brings tab `id` into the tiles (starting a tiled view with the front tab if there is none),
+    /// optionally at a drop position next to `at.0`.
+    fn tile_with(&mut self, id: u64, at: Option<(u64, DropZone)>) {
+        if self.entries.iter().find(|e| e.id == id).is_none_or(|e| e.kind == Kind::Graph) {
+            return;
+        }
+        if self.tiles.len() < 2 {
+            let tileable = |entries: &[Entry], t: u64| entries.iter().any(|e| e.id == t && e.kind != Kind::Graph);
+            let front = match self.view {
+                View::Tab(v) if v != id && tileable(&self.entries, v) => Some(v),
+                _ => None,
+            };
+            let partner = front.or_else(|| self.entries.iter().rev().find(|e| e.id != id && e.kind != Kind::Graph).map(|e| e.id));
+            let Some(p) = partner else { return };
+            self.tiles = vec![p, id];
+            self.tile_layout.clear();
+            self.tile_warm.clear();
+            self.tile_restores.clear();
+            self.tile_prompt = false;
+        } else if !self.tiles.contains(&id) {
+            self.tiles.push(id);
+            while self.tiles.len() > MAX_TILES {
+                self.tiles.remove(0);
+            }
+            if let Some((target, zone)) = at {
+                self.reflow_tiles(self.tile_max_cols);
+                self.move_tile(id, target, zone);
+            }
+        }
+        self.view = View::Tab(id);
     }
 
     fn untile(&mut self) {
@@ -1091,41 +1226,255 @@ impl Suite {
         }
     }
 
-    /// Draws the tiled tabs side by side. Clicking a tile brings it to the front.
-    fn tile_ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame, ids: &[u64]) {
+    /// Keeps `tile_layout` in step with `tiles`: drops closed tiles, places new ones, and folds
+    /// columns together when the window no longer has room for them.
+    fn reflow_tiles(&mut self, max_cols: usize) {
+        let want = self.tiles.clone();
+        let lay = &mut self.tile_layout;
+        let mut cols_changed = false;
+        for c in lay.iter_mut() {
+            let n = c.rows.len();
+            c.rows.retain(|(id, _)| want.contains(id));
+            if c.rows.len() != n {
+                renorm_rows(c);
+            }
+        }
+        if lay.iter().any(|c| c.rows.is_empty()) {
+            lay.retain(|c| !c.rows.is_empty());
+            cols_changed = true;
+        }
+        while lay.len() > max_cols.max(1) {
+            if let Some(last) = lay.pop() {
+                if let Some(c) = lay.last_mut() {
+                    c.rows.extend(last.rows);
+                    equalize_rows(c);
+                }
+            }
+            cols_changed = true;
+        }
+        for id in want {
+            if lay.iter().any(|c| c.rows.iter().any(|(r, _)| *r == id)) {
+                continue;
+            }
+            if lay.len() < max_cols {
+                lay.push(TileCol { w: 0.0, rows: vec![(id, 1.0)] });
+                equalize_cols(lay);
+            } else if let Some(i) = (0..lay.len()).min_by_key(|i| lay[*i].rows.len()) {
+                lay[i].rows.push((id, 0.0));
+                equalize_rows(&mut lay[i]);
+            }
+            cols_changed = false;
+        }
+        if cols_changed {
+            renorm_cols(lay);
+        }
+        self.tiles = lay.iter().flat_map(|c| c.rows.iter().map(|(id, _)| *id)).collect();
+    }
+
+    /// Moves tile `id` next to `target` (or swaps them) and gives the touched row or column an even split.
+    fn move_tile(&mut self, id: u64, target: u64, zone: DropZone) {
+        let pos = |lay: &[TileCol], t: u64| lay.iter().enumerate().find_map(|(ci, c)| c.rows.iter().position(|(r, _)| *r == t).map(|ri| (ci, ri)));
+        let lay = &mut self.tile_layout;
+        let (Some((ci, ri)), Some((tc, tr))) = (pos(lay, id), pos(lay, target)) else { return };
+        if zone == DropZone::Swap {
+            let (a, b) = (lay[ci].rows[ri].0, lay[tc].rows[tr].0);
+            lay[ci].rows[ri].0 = b;
+            lay[tc].rows[tr].0 = a;
+        } else {
+            lay[ci].rows.remove(ri);
+            if lay[ci].rows.is_empty() {
+                lay.remove(ci);
+                renorm_cols(lay);
+            } else {
+                renorm_rows(&mut lay[ci]);
+            }
+            let Some((tc, tr)) = pos(lay, target) else { return };
+            match zone {
+                DropZone::Above | DropZone::Below => {
+                    let at = if zone == DropZone::Above { tr } else { tr + 1 };
+                    lay[tc].rows.insert(at, (id, 0.0));
+                    equalize_rows(&mut lay[tc]);
+                }
+                _ => {
+                    let at = if zone == DropZone::ColBefore { tc } else { tc + 1 };
+                    lay.insert(at, TileCol { w: 0.0, rows: vec![(id, 1.0)] });
+                    equalize_cols(lay);
+                }
+            }
+        }
+        self.tiles = lay.iter().flat_map(|c| c.rows.iter().map(|(r, _)| *r)).collect();
+    }
+
+    /// Draws the tiled tabs. Each tile has a title strip to drag it by; the gaps between tiles
+    /// resize them. Columns are capped by the window's width (`max_tile_cols`).
+    fn tile_ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame, _ids: &[u64]) {
         let ctx = ui.ctx().clone();
         let settling = self.tile_settle > 0;
         self.tile_settle = self.tile_settle.saturating_sub(1);
         let area = ui.available_rect_before_wrap();
+        let max_cols = max_tile_cols(area.width());
+        self.reflow_tiles(max_cols);
         let gap = 6.0;
-        // Up to three in a row; four make a two by two grid, which keeps each app wide enough.
-        let cols = if ids.len() > 3 { 2 } else { ids.len() };
-        let rows = ids.len().div_ceil(cols);
-        let width = ((area.width() - gap * (cols as f32 - 1.0)) / cols as f32).max(120.0);
-        let height = ((area.height() - gap * (rows as f32 - 1.0)) / rows as f32).max(120.0);
+        let head = 20.0;
+        self.tile_max_cols = max_cols;
+        let ncols = self.tile_layout.len().max(1);
+        let avail_w = (area.width() - gap * (ncols as f32 - 1.0)).max(1.0);
+        let min_w = (280.0 / avail_w).min(1.0 / ncols as f32);
+
+        // Geometry of every tile, and the splitters between them.
+        let mut rects: Vec<(u64, egui::Rect)> = Vec::new();
+        let mut col_adj: Option<(usize, f32)> = None;
+        let mut row_adj: Option<(usize, usize, f32)> = None;
+        let mut x = area.min.x;
+        for ci in 0..self.tile_layout.len() {
+            let col = &self.tile_layout[ci];
+            let w = col.w * avail_w;
+            let nrows = col.rows.len();
+            let avail_h = (area.height() - gap * (nrows as f32 - 1.0)).max(1.0);
+            let min_h = (150.0 / avail_h).min(1.0 / nrows as f32);
+            let mut y = area.min.y;
+            for (ri, (id, h)) in col.rows.iter().enumerate() {
+                let hh = h * avail_h;
+                let r = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, hh));
+                rects.push((*id, r));
+                if ri + 1 < nrows {
+                    let bar = egui::Rect::from_min_size(egui::pos2(x, y + hh), egui::vec2(w, gap)).expand2(egui::vec2(0.0, 2.0));
+                    let resp = ui.interact(bar, egui::Id::new(("tile-rsplit", ci, ri)), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                    if resp.dragged() {
+                        let d = resp.drag_delta().y / avail_h;
+                        let (a, b) = (col.rows[ri].1, col.rows[ri + 1].1);
+                        let d = d.clamp(min_h - a, b - min_h);
+                        row_adj = Some((ci, ri, d));
+                    }
+                }
+                y += hh + gap;
+            }
+            if ci + 1 < self.tile_layout.len() {
+                let bar = egui::Rect::from_min_size(egui::pos2(x + w, area.min.y), egui::vec2(gap, area.height())).expand2(egui::vec2(2.0, 0.0));
+                let resp = ui.interact(bar, egui::Id::new(("tile-csplit", ci)), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                if resp.dragged() {
+                    let d = resp.drag_delta().x / avail_w;
+                    let (a, b) = (col.w, self.tile_layout[ci + 1].w);
+                    col_adj = Some((ci, d.clamp(min_w - a, b - min_w)));
+                }
+            }
+            x += w + gap;
+        }
+        if let Some((ci, d)) = col_adj {
+            self.tile_layout[ci].w += d;
+            self.tile_layout[ci + 1].w -= d;
+        }
+        if let Some((ci, ri, d)) = row_adj {
+            self.tile_layout[ci].rows[ri].1 += d;
+            self.tile_layout[ci].rows[ri + 1].1 -= d;
+        }
+
+        self.tile_rects = rects.clone();
+        let pointer = ctx.input(|i| i.pointer.latest_pos());
         let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
         let mut focus = None;
-        for (i, tid) in ids.iter().enumerate() {
-            let (col, row) = (i % cols, i / cols);
-            let rect = egui::Rect::from_min_size(
-                area.min + egui::vec2(col as f32 * (width + gap), row as f32 * (height + gap)),
-                egui::vec2(width, height),
-            );
-            let focused = self.view == View::Tab(*tid);
+        let mut dragging: Option<u64> = None;
+        let mut dropped: Option<u64> = None;
+        let mut close_req: Option<u64> = None;
+        let mut take_out: Option<u64> = None;
+        let mut new_kind: Option<Kind> = None;
+        let mut add_tab: Option<u64> = None;
+        // Open documents that are not in the tiles: they can be added from a tile's "+" menu.
+        let others: Vec<(u64, String)> = self.entries.iter().filter(|e| e.kind != Kind::Graph && !self.tiles.contains(&e.id)).map(|e| (e.id, e.name.clone())).collect();
+        for (tid, rect) in rects.iter().copied() {
+            let focused = self.view == View::Tab(tid);
             if !focused && pressed.is_some_and(|p| rect.contains(p)) {
-                focus = Some(*tid);
+                focus = Some(tid);
             }
-            let running = self.tile_running.contains(tid) && !settling;
-            let Some(e) = self.entries.iter_mut().find(|e| e.id == *tid) else { continue };
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
-            child.set_clip_rect(rect.intersect(ui.clip_rect()));
+            let running = self.tile_running.contains(&tid) && !settling;
+            let Some(e) = self.entries.iter_mut().find(|e| e.id == tid) else { continue };
+            let kind_col = kind_color(Some(e.kind));
+            // Title strip: the handle for dragging the tile to another place.
+            let strip = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), head));
+            let handle = ui.interact(strip, egui::Id::new(("tile-head", tid)), egui::Sense::click_and_drag());
+            if handle.hovered() || handle.dragged() {
+                ctx.set_cursor_icon(if handle.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+            }
+            if handle.dragged() {
+                dragging = Some(tid);
+            }
+            if handle.drag_stopped() {
+                dropped = Some(tid);
+            }
+            if handle.clicked() || handle.drag_started() {
+                focus = Some(tid);
+            }
+            handle.context_menu(|ui| {
+                if ui.button("Remove from the tiles").clicked() {
+                    take_out = Some(tid);
+                    ui.close();
+                }
+                if ui.button("Close document").clicked() {
+                    close_req = Some(tid);
+                    ui.close();
+                }
+            });
+            let painter = ui.painter();
+            // Solid colours: the apps' own visuals (light or dark) must not decide legibility.
+            let fill = if focused { kind_col } else { kind_col.lerp_to_gamma(egui::Color32::from_gray(110), 0.45) };
+            painter.rect_filled(strip, 0.0, fill);
+            for i in 0..3 {
+                painter.circle_filled(strip.left_center() + egui::vec2(9.0 + i as f32 * 5.0, 0.0), 1.4, egui::Color32::WHITE);
+            }
+            let title = painter.layout_no_wrap(e.name.clone(), egui::FontId::proportional(11.5), egui::Color32::WHITE);
+            let btns = egui::Rect::from_min_max(egui::pos2((strip.max.x - 56.0).max(strip.min.x + 28.0), strip.min.y), strip.max);
+            let clip = egui::Rect::from_min_max(strip.min + egui::vec2(28.0, 0.0), egui::pos2(btns.min.x, strip.max.y));
+            painter.with_clip_rect(clip).galley(egui::pos2(clip.min.x, strip.center().y - title.size().y / 2.0), title, egui::Color32::WHITE);
+
+            // Close, take out of the tiles (it stays a tab), and add another document.
+            let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(btns.shrink2(egui::vec2(4.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            bui.spacing_mut().item_spacing.x = 2.0;
+            bui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
+            bui.spacing_mut().interact_size.y = head - 2.0;
+            {
+                let w = &mut bui.visuals_mut().widgets;
+                for st in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+                    st.weak_bg_fill = egui::Color32::TRANSPARENT;
+                    st.bg_fill = egui::Color32::TRANSPARENT;
+                    st.bg_stroke = egui::Stroke::NONE;
+                }
+                w.hovered.weak_bg_fill = egui::Color32::from_white_alpha(46);
+                w.active.weak_bg_fill = egui::Color32::from_white_alpha(70);
+                w.open.weak_bg_fill = egui::Color32::from_white_alpha(46);
+            }
+            let white = |t: &str| egui::RichText::new(t.to_string()).color(egui::Color32::WHITE).size(12.5);
+            if bui.add(egui::Button::new(white("×")).frame(false)).on_hover_text("Remove from the tiles; the document stays open in its tab").clicked() {
+                take_out = Some(tid);
+            }
+            bui.menu_button(white("+"), |ui| {
+                for k in [Kind::Word, Kind::Grid, Kind::Deck, Kind::Pdf] {
+                    if ui.button(format!("New {}", k.label())).clicked() {
+                        new_kind = Some(k);
+                        ui.close();
+                    }
+                }
+                if !others.is_empty() {
+                    ui.separator();
+                    ui.label("Add an open tab");
+                    for (id, name) in &others {
+                        if ui.button(name).clicked() {
+                            add_tab = Some(*id);
+                            ui.close();
+                        }
+                    }
+                }
+            });
+
+            let body = egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.min.y + head), rect.max);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
+            child.set_clip_rect(body.intersect(ui.clip_rect()));
             if running {
                 if let Some(style) = self.tile_styles.get(&e.kind) {
                     child.set_style(style.clone());
                 }
                 let before = ctx.global_style();
                 with_events_withheld(&ctx, !focused, || {
-                    child.push_id(("tile", *tid), |ui| e.tab.ui(ui, frame));
+                    child.push_id(("tile", tid), |ui| e.tab.ui(ui, frame));
                 });
                 let after = ctx.global_style();
                 if !std::sync::Arc::ptr_eq(&before, &after) {
@@ -1137,12 +1486,46 @@ impl Suite {
                 });
                 ctx.request_repaint();
             }
-            let ring = if focused { egui::Stroke::new(2.0, kind_color(Some(e.kind))) } else { egui::Stroke::new(1.0, LINE) };
+            let ring = if focused { egui::Stroke::new(2.0, kind_col) } else { egui::Stroke::new(1.0, LINE) };
             ui.painter().rect_stroke(rect, 0.0, ring, egui::StrokeKind::Inside);
         }
         ui.allocate_rect(area, egui::Sense::hover());
+
+        // While a tile is being dragged, show where it would land; apply it on release.
+        if let (Some(tid), Some(p)) = (dragging.or(dropped).or(self.tab_drag), pointer) {
+            let alone = self.tile_layout.iter().any(|c| c.rows.len() == 1 && c.rows[0].0 == tid);
+            let room = self.tile_layout.len() - usize::from(alone) < max_cols;
+            if let Some((target, zone, trect)) = drop_target(&rects, tid, p, room) {
+                if dropped.is_none() {
+                    let hint = drop_hint_rect(trect, zone);
+                    let layer = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("tile-drop")));
+                    layer.rect_filled(hint, 4.0, ACCENT.gamma_multiply(0.28));
+                    layer.rect_stroke(hint, 4.0, egui::Stroke::new(2.0, ACCENT), egui::StrokeKind::Inside);
+                } else {
+                    self.move_tile(tid, target, zone);
+                    focus = Some(tid);
+                }
+            }
+        }
         if let Some(t) = focus {
             self.view = View::Tab(t);
+        }
+        if let Some(id) = take_out {
+            self.take_out_tile(id);
+        }
+        if let Some(id) = add_tab {
+            self.tiles.push(id);
+            while self.tiles.len() > MAX_TILES {
+                self.tiles.remove(0);
+            }
+            self.view = View::Tab(id);
+        }
+        if let Some(k) = new_kind {
+            // Already tiled, so `push_tab` puts the new document into the tiles.
+            self.new_tab(k);
+        }
+        if let Some(id) = close_req {
+            self.request_close(id);
         }
     }
 
@@ -1814,6 +2197,22 @@ impl eframe::App for Suite {
                 // Move focus, go back to single tabs, tile again: every switch re-installs fonts.
                 match n {
                     120 => self.view = View::Tab(self.tiles[0]),
+                    // Drag the last tile above the first, as a user dropping it on its top edge would.
+                    // Take a tile out, then bring its tab back by dropping it on a tile's lower edge.
+                    340 if self.tiles.len() >= 4 => {
+                        let id = self.tiles[0];
+                        self.take_out_tile(id);
+                        self.tile_test_out = Some(id);
+                    }
+                    370 => {
+                        if let (Some(id), Some(t)) = (self.tile_test_out.take(), self.tiles.first().copied()) {
+                            self.tile_with(id, Some((t, DropZone::Below)));
+                        }
+                    }
+                    300 if self.tiles.len() >= 4 => {
+                        let (a, b) = (self.tiles[3], self.tiles[0]);
+                        self.move_tile(a, b, DropZone::Above);
+                    }
                     180 => self.untile(),
                     240 => self.tile_all(),
                     _ => {}
@@ -1985,6 +2384,10 @@ impl eframe::App for Suite {
         let mut new: Option<Kind> = None;
         let mut toggle_chat: Option<u64> = None;
         let mut toggle_tile = false;
+        let mut drag_now: Option<u64> = None;
+        let mut drop_tab: Option<(u64, egui::Pos2)> = None;
+        let mut tile_in: Option<u64> = None;
+        let mut tile_out: Option<u64> = None;
         // Tiled: the shell's own bar takes the front app's colours, not whichever installed last.
         if self.tiled_ids().is_some()
             && let View::Tab(id) = self.view
@@ -2016,9 +2419,37 @@ impl eframe::App for Suite {
                     let (stripe, _) = ui.allocate_exact_size(egui::vec2(3.0, 14.0), egui::Sense::hover());
                     ui.painter().rect_filled(stripe, 1.5, kind_color(Some(e.kind)));
                     let shown = title;
-                    if ui.selectable_label(self.view == View::Tab(e.id), shown).on_hover_text(e.path.as_deref().unwrap_or("Not saved yet")).clicked() {
+                    let r = ui.selectable_label(self.view == View::Tab(e.id), shown).on_hover_text(e.path.as_deref().unwrap_or("Not saved yet"));
+                    // Also draggable (onto the content to tile it) and right-clickable.
+                    let r = r.interact(egui::Sense::click_and_drag());
+                    let tileable = e.kind != Kind::Graph;
+                    if r.clicked() {
                         select = Some(View::Tab(e.id));
                     }
+                    if tileable && r.dragged() {
+                        drag_now = Some(e.id);
+                    }
+                    if tileable && r.drag_stopped() {
+                        drop_tab = ui.ctx().input(|i| i.pointer.latest_pos()).map(|p| (e.id, p));
+                    }
+                    let in_tiles = self.tiles.len() >= 2 && self.tiles.contains(&e.id);
+                    r.context_menu(|ui| {
+                        if tileable {
+                            if in_tiles {
+                                if ui.button("Remove from the tiles").clicked() {
+                                    tile_out = Some(e.id);
+                                    ui.close();
+                                }
+                            } else if ui.button("Tile this tab").clicked() {
+                                tile_in = Some(e.id);
+                                ui.close();
+                            }
+                        }
+                        if ui.button("Close tab").clicked() {
+                            close = Some(e.id);
+                            ui.close();
+                        }
+                    });
                     if ui.small_button("×").on_hover_text("Close tab").clicked() {
                         close = Some(e.id);
                     }
@@ -2077,6 +2508,29 @@ impl eframe::App for Suite {
             && let Some(e) = self.entry_mut(id)
         {
             e.chat.open = !e.chat.open;
+        }
+        if let Some(id) = tile_in {
+            self.tile_with(id, None);
+        }
+        if let Some(id) = tile_out {
+            self.take_out_tile(id);
+        }
+        if let Some((id, p)) = drop_tab {
+            // Released over the content, not back on the tab bar.
+            if p.y > ui.max_rect().min.y + 44.0 && !self.tiles.contains(&id) {
+                let room = self.tile_layout.len() < self.tile_max_cols;
+                let at = if self.tiles.len() >= 2 { drop_target(&self.tile_rects, id, p, room).map(|(t, z, _)| (t, z)) } else { None };
+                self.tile_with(id, at);
+            }
+        }
+        self.tab_drag = drag_now;
+        if let Some(id) = drag_now
+            && let Some(p) = ui.ctx().input(|i| i.pointer.latest_pos())
+        {
+            let name = self.entries.iter().find(|e| e.id == id).map(|e| e.name.clone()).unwrap_or_default();
+            let layer = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("tab-drag")));
+            layer.text(p + egui::vec2(14.0, 14.0), egui::Align2::LEFT_TOP, format!("Tile {name}"), egui::FontId::proportional(13.0), ACCENT);
+            ui.ctx().request_repaint();
         }
         if toggle_tile {
             if self.tiles.len() >= 2 {
