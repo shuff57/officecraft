@@ -290,6 +290,85 @@ impl Look {
     }
 }
 
+/// What happens when a second document is opened: ask, tile straight away, or keep tabs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TilePref {
+    Ask,
+    Always,
+    Never,
+}
+
+impl TilePref {
+    fn load() -> Self {
+        match platform::read("tiling.txt").as_deref().map(str::trim) {
+            Some("always") => TilePref::Always,
+            Some("never") => TilePref::Never,
+            _ => TilePref::Ask,
+        }
+    }
+
+    fn save(self) {
+        let text = match self {
+            TilePref::Ask => "ask",
+            TilePref::Always => "always",
+            TilePref::Never => "never",
+        };
+        let _ = platform::write("tiling.txt", text);
+    }
+}
+
+/// Most tabs shown side by side.
+const MAX_TILES: usize = 4;
+/// Frames an app has to run alone, installing its fonts and style, before the next one starts.
+const TILE_WARM_FRAMES: u8 = 3;
+
+/// Adds to `into` every font and family `from` has that it lacks; true if anything was added.
+/// Apps replace the whole font set when they install, so tiled apps keep a union alive.
+fn merge_fonts(into: &mut egui::FontDefinitions, from: &egui::FontDefinitions) -> bool {
+    let mut changed = false;
+    for (name, data) in &from.font_data {
+        if !into.font_data.contains_key(name) {
+            into.font_data.insert(name.clone(), data.clone());
+            changed = true;
+        }
+    }
+    for (family, names) in &from.families {
+        let have = into.families.entry(family.clone()).or_insert_with(|| {
+            changed = true;
+            Vec::new()
+        });
+        for n in names {
+            if !have.contains(n) {
+                have.push(n.clone());
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+/// Whether `have` binds every font and family `want` does, so any tiled app's text can be laid out.
+fn fonts_cover(have: &egui::FontDefinitions, want: &egui::FontDefinitions) -> bool {
+    want.font_data.keys().all(|k| have.font_data.contains_key(k))
+        && want.families.iter().all(|(fam, names)| have.families.get(fam).is_some_and(|h| names.iter().all(|n| h.contains(n))))
+}
+
+/// Runs `f`, with the frame's key, text and clipboard events held back when `withhold` (so a
+/// tile that is not in front does not act on the front tile's typing and shortcuts).
+fn with_events_withheld<R>(ctx: &egui::Context, withhold: bool, f: impl FnOnce() -> R) -> R {
+    if !withhold {
+        return f();
+    }
+    let held = ctx.input_mut(|i| std::mem::take(&mut i.events));
+    let out = f();
+    ctx.input_mut(|i| {
+        let mut all = held;
+        all.append(&mut i.events);
+        i.events = all;
+    });
+    out
+}
+
 /// Apps whose own `context_changed` is not available to the shell; it restores their `Look`.
 fn restores_look(kind: Kind) -> bool {
     matches!(kind, Kind::Grid | Kind::Pdf)
@@ -757,6 +836,29 @@ struct Suite {
     settle: u8,
     /// An app whose style goes back once its fonts are active (see `Look::apply_fonts`).
     restyle: Option<Kind>,
+    /// Tabs shown side by side, left to right. Fewer than two means not tiled.
+    tiles: Vec<u64>,
+    tile_pref: TilePref,
+    /// A document was opened beside others and the visitor has not said whether to tile.
+    tile_prompt: bool,
+    tile_remember: bool,
+    /// Every font any tiled app installed, kept installed so none of them loses a family.
+    fonts_union: Option<egui::FontDefinitions>,
+    /// Frames still to skip drawing tiles after the font set was replaced (it applies next pass).
+    tile_settle: u8,
+    /// The tabs allowed to run this frame: warmed-up apps plus at most one still installing.
+    tile_running: Vec<u64>,
+    /// Frames each kind has run in a tile; installing its fonts and style takes a few.
+    tile_warm: std::collections::HashMap<Kind, u8>,
+    /// Each app's own style as it last installed it, applied inside its tile.
+    tile_styles: std::collections::HashMap<Kind, std::sync::Arc<egui::Style>>,
+    /// Frame numbers of recent font-set restorations: an app that replaces the set every frame
+    /// cannot share the window.
+    tile_restores: Vec<u64>,
+    tile_frame: u64,
+    /// `OFFICECRAFT_TILES=1`: open one tab of each app, tile them, run, exit 0 (or take the
+    /// `OFFICECRAFT_SHOT` picture once they have warmed up).
+    tiles_test: Option<u64>,
 }
 
 impl Suite {
@@ -773,7 +875,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite.recount();
         suite
     }
@@ -800,7 +902,182 @@ impl Suite {
         let n = self.entries.iter().filter(|e| e.kind == kind).count() + 1;
         self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), pdf_client: None });
         self.view = View::Tab(id);
+        if self.tiles.len() >= 2 {
+            // Already tiled: the new document joins, the oldest tile steps back to its tab.
+            self.tiles.push(id);
+            while self.tiles.len() > MAX_TILES {
+                self.tiles.remove(0);
+            }
+        } else if self.entries.len() >= 2 {
+            match self.tile_pref {
+                TilePref::Ask => self.tile_prompt = true,
+                TilePref::Always => self.tile_all(),
+                TilePref::Never => {}
+            }
+        }
         id
+    }
+
+    /// The tabs drawn side by side right now: only while the front tab is one of them.
+    fn tiled_ids(&self) -> Option<Vec<u64>> {
+        let View::Tab(id) = self.view else { return None };
+        (self.tiles.len() >= 2 && self.tiles.contains(&id)).then(|| self.tiles.clone())
+    }
+
+    /// Tiles the most recently opened tabs (up to `MAX_TILES`).
+    fn tile_all(&mut self) {
+        let from = self.entries.len().saturating_sub(MAX_TILES);
+        self.tiles = self.entries[from..].iter().map(|e| e.id).collect();
+        if self.tiles.len() < 2 {
+            self.tiles.clear();
+            return;
+        }
+        if !matches!(self.view, View::Tab(id) if self.tiles.contains(&id)) {
+            self.view = View::Tab(*self.tiles.last().unwrap_or(&0));
+        }
+        // Each app installs its fonts and style again, one after another.
+        self.tile_warm.clear();
+        self.tile_restores.clear();
+        self.tile_prompt = false;
+    }
+
+    fn untile(&mut self) {
+        self.tiles.clear();
+        self.tile_running.clear();
+        self.tile_prompt = false;
+        // The front app must install its own fonts and style alone again.
+        self.ctx_owner = None;
+    }
+
+    fn prune_tiles(&mut self) {
+        let have: Vec<u64> = self.entries.iter().map(|e| e.id).collect();
+        self.tiles.retain(|t| have.contains(t));
+        if self.tiles.len() < 2 && !self.tiles.is_empty() {
+            self.tiles.clear();
+        }
+    }
+
+    /// Per-frame work for tiled apps: keep every app's fonts installed, let one app at a time
+    /// warm up, then run each app's `logic` with only the front tile receiving key events.
+    fn tile_logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame, ids: &[u64]) {
+        self.tile_frame += 1;
+        let active = ctx.fonts(|f| f.definitions().clone());
+        let union = self.fonts_union.get_or_insert_with(|| active.clone());
+        merge_fonts(union, &active);
+        for id in ids {
+            if let Some(kind) = self.entries.iter().find(|e| e.id == *id).map(|e| e.kind)
+                && let Some(look) = self.looks.get(&kind)
+            {
+                // GridCraft and PdfCraft: what they installed when they last had the window.
+                merge_fonts(union, &look.fonts);
+                self.tile_styles.entry(kind).or_insert_with(|| look.light.clone());
+            }
+        }
+        if !fonts_cover(&active, union) {
+            ctx.set_fonts(union.clone());
+            self.tile_settle = 2;
+            let now = self.tile_frame;
+            self.tile_restores.retain(|f| now.saturating_sub(*f) < 180);
+            self.tile_restores.push(now);
+            ctx.request_repaint();
+            if self.tile_restores.len() > 10 {
+                self.notice = Some("These apps keep replacing each other's fonts, so they cannot be shown side by side. They stay open as tabs.".into());
+                self.untile();
+                return;
+            }
+        }
+
+        // Warm-up: every kind that has not yet installed waits its turn, one per frame.
+        self.tile_running.clear();
+        let mut installing = false;
+        for id in ids {
+            let Some(kind) = self.entries.iter().find(|e| e.id == *id).map(|e| e.kind) else { continue };
+            let seen = self.looks.contains_key(&kind) && restores_look(kind);
+            let warm = self.tile_warm.get(&kind).copied().unwrap_or(if seen { TILE_WARM_FRAMES } else { 0 });
+            if warm < TILE_WARM_FRAMES {
+                if installing {
+                    continue;
+                }
+                installing = true;
+                if warm == 0
+                    && let Some(e) = self.entries.iter_mut().find(|e| e.id == *id)
+                {
+                    // Docs and Slides put their fonts and style back when told the context changed.
+                    e.tab.context_changed();
+                }
+                ctx.request_repaint();
+            }
+            self.tile_warm.insert(kind, warm.saturating_add(1));
+            self.tile_running.push(*id);
+        }
+
+        let front = self.view;
+        let running = self.tile_running.clone();
+        let theme_style_before = ctx.global_style();
+        for id in running {
+            let withhold = front != View::Tab(id);
+            let Some(e) = self.entries.iter_mut().find(|e| e.id == id) else { continue };
+            with_events_withheld(ctx, withhold, || e.tab.logic(ctx, frame));
+            let after = ctx.global_style();
+            if !std::sync::Arc::ptr_eq(&theme_style_before, &after) {
+                self.tile_styles.insert(e.kind, after);
+            }
+        }
+    }
+
+    /// Draws the tiled tabs side by side. Clicking a tile brings it to the front.
+    fn tile_ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame, ids: &[u64]) {
+        let ctx = ui.ctx().clone();
+        let settling = self.tile_settle > 0;
+        self.tile_settle = self.tile_settle.saturating_sub(1);
+        let area = ui.available_rect_before_wrap();
+        let gap = 6.0;
+        // Up to three in a row; four make a two by two grid, which keeps each app wide enough.
+        let cols = if ids.len() > 3 { 2 } else { ids.len() };
+        let rows = ids.len().div_ceil(cols);
+        let width = ((area.width() - gap * (cols as f32 - 1.0)) / cols as f32).max(120.0);
+        let height = ((area.height() - gap * (rows as f32 - 1.0)) / rows as f32).max(120.0);
+        let pressed = ctx.input(|i| if i.pointer.any_pressed() { i.pointer.interact_pos() } else { None });
+        let mut focus = None;
+        for (i, tid) in ids.iter().enumerate() {
+            let (col, row) = (i % cols, i / cols);
+            let rect = egui::Rect::from_min_size(
+                area.min + egui::vec2(col as f32 * (width + gap), row as f32 * (height + gap)),
+                egui::vec2(width, height),
+            );
+            let focused = self.view == View::Tab(*tid);
+            if !focused && pressed.is_some_and(|p| rect.contains(p)) {
+                focus = Some(*tid);
+            }
+            let running = self.tile_running.contains(tid) && !settling;
+            let Some(e) = self.entries.iter_mut().find(|e| e.id == *tid) else { continue };
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+            child.set_clip_rect(rect.intersect(ui.clip_rect()));
+            if running {
+                if let Some(style) = self.tile_styles.get(&e.kind) {
+                    child.set_style(style.clone());
+                }
+                let before = ctx.global_style();
+                with_events_withheld(&ctx, !focused, || {
+                    child.push_id(("tile", *tid), |ui| e.tab.ui(ui, frame));
+                });
+                let after = ctx.global_style();
+                if !std::sync::Arc::ptr_eq(&before, &after) {
+                    self.tile_styles.insert(e.kind, after);
+                }
+            } else {
+                child.centered_and_justified(|ui| {
+                    ui.label(format!("Loading {}…", e.name));
+                });
+                ctx.request_repaint();
+            }
+            let ring = if focused { egui::Stroke::new(2.0, kind_color(Some(e.kind))) } else { egui::Stroke::new(1.0, LINE) };
+            ui.painter().rect_stroke(rect, 0.0, ring, egui::StrokeKind::Inside);
+        }
+        ui.allocate_rect(area, egui::Sense::hover());
+        if let Some(t) = focus {
+            self.view = View::Tab(t);
+        }
     }
 
     fn entry_mut(&mut self, id: u64) -> Option<&mut Entry> {
@@ -869,6 +1146,7 @@ impl Suite {
     fn close(&mut self, id: u64) {
         self.entries.retain(|e| e.id != id);
         self.confirm_close = None;
+        self.prune_tiles();
         if self.view == View::Tab(id) {
             self.view = self.entries.last().map(|e| View::Tab(e.id)).unwrap_or(View::Home);
         }
@@ -1387,7 +1665,8 @@ impl eframe::App for Suite {
                 let (kind, cfg) = (e.kind, self.ai_cfg.clone());
                 e.chat.ask_text(prompt, ai_app(kind), &cfg, ctx);
             }
-            if *n >= 20 && !waiting && !self.shot_sent {
+            let settled = if self.tiles_test.is_some() { 420 } else { 20 };
+            if *n >= settled && !waiting && !self.shot_sent {
                 self.shot_sent = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }
@@ -1403,6 +1682,52 @@ impl eframe::App for Suite {
                 eprintln!("shot: no screenshot event arrived");
                 std::process::exit(1);
             }
+        }
+        if let Some(n) = self.tiles_test {
+            // `OFFICECRAFT_TILES=ask`: open Docs, then Sheets beside it, and let the prompt show.
+            let ask = std::env::var("OFFICECRAFT_TILES").is_ok_and(|v| v == "ask");
+            if ask {
+                match n {
+                    0 => {
+                        self.tile_pref = TilePref::Ask;
+                        self.new_tab(Kind::Word);
+                    }
+                    40 => {
+                        self.new_tab(Kind::Grid);
+                    }
+                    120 if !self.tile_prompt => {
+                        eprintln!("tiles(ask): the prompt never appeared");
+                        std::process::exit(1);
+                    }
+                    200 => self.tile_all(),
+                    _ => {}
+                }
+                if n >= 320 && self.shot.is_none() {
+                    eprintln!("tiles(ask): prompt shown and accepted over {n} frames without a panic");
+                    std::process::exit(if self.tiles.len() >= 2 { 0 } else { 1 });
+                }
+            } else {
+                if n == 0 {
+                    for k in Kind::ALL {
+                        self.new_tab(k);
+                    }
+                    self.tile_pref = TilePref::Never;
+                    self.tile_all();
+                }
+                // Move focus, go back to single tabs, tile again: every switch re-installs fonts.
+                match n {
+                    120 => self.view = View::Tab(self.tiles[0]),
+                    180 => self.untile(),
+                    240 => self.tile_all(),
+                    _ => {}
+                }
+                if n >= 420 && self.shot.is_none() {
+                    eprintln!("tiles: ran {n} frames with {} tiles without a panic", self.tiles.len());
+                    std::process::exit(if self.tiles.len() >= 2 { 0 } else { 1 });
+                }
+            }
+            self.tiles_test = Some(n + 1);
+            ctx.request_repaint();
         }
         if let Some(n) = self.selftest {
             const EVERY: u64 = 40;
@@ -1490,7 +1815,15 @@ impl eframe::App for Suite {
             look.apply_style(ctx);
             ctx.request_repaint();
         }
+        self.prune_tiles();
+        let tiled = self.tiled_ids();
+        if let Some(ids) = &tiled {
+            // Several apps at once: the one-owner font handling below does not apply.
+            self.ctx_owner = None;
+            self.tile_logic(ctx, frame, ids);
+        }
         if let View::Tab(id) = self.view
+            && tiled.is_none()
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
         {
             if self.ctx_owner != Some(e.kind) {
@@ -1554,6 +1887,15 @@ impl eframe::App for Suite {
         let mut close: Option<u64> = None;
         let mut new: Option<Kind> = None;
         let mut toggle_chat: Option<u64> = None;
+        let mut toggle_tile = false;
+        // Tiled: the shell's own bar takes the front app's colours, not whichever installed last.
+        if self.tiled_ids().is_some()
+            && let View::Tab(id) = self.view
+            && let Some(kind) = self.entries.iter().find(|e| e.id == id).map(|e| e.kind)
+            && let Some(style) = self.tile_styles.get(&kind)
+        {
+            ui.set_style(style.clone());
+        }
         let mut open_settings = false;
         let bar_frame = if self.view == View::Home {
             egui::Frame::new().fill(egui::Color32::from_rgb(223, 229, 236)).inner_margin(egui::Margin::symmetric(8, 4))
@@ -1603,6 +1945,12 @@ impl eframe::App for Suite {
                             toggle_chat = Some(id);
                         }
                     }
+                    let tiled = self.tiles.len() >= 2;
+                    let hint = if tiled { "Back to one document at a time" } else { "Show open documents side by side" };
+                    let can = tiled || self.entries.len() >= 2;
+                    if ui.add_enabled_ui(can, |ui| ui.selectable_label(tiled, "▥ Tile").on_hover_text(hint).clicked()).inner {
+                        toggle_tile = true;
+                    }
                 });
             });
         });
@@ -1622,6 +1970,57 @@ impl eframe::App for Suite {
             && let Some(e) = self.entry_mut(id)
         {
             e.chat.open = !e.chat.open;
+        }
+        if toggle_tile {
+            if self.tiles.len() >= 2 {
+                self.untile();
+            } else {
+                self.tile_all();
+            }
+        }
+        // The prompt is shell UI drawn with whatever style the context holds. Right after an app is
+        // shown, its style is in place a pass before its fonts are, and naming a family that is not
+        // bound yet panics: wait until the front app has settled.
+        let front_settled = match self.view {
+            View::Tab(id) => {
+                self.settle == 0
+                    && self.owner_frames >= 6
+                    && self.entries.iter().find(|e| e.id == id).is_some_and(|e| self.ctx_owner == Some(e.kind))
+            }
+            View::Home => self.home_styled,
+        };
+        if self.tile_prompt && self.tiles.len() < 2 && !front_settled {
+            // An idle window draws no frames, and the front app needs a few to settle.
+            ui.ctx().request_repaint();
+        }
+        if self.tile_prompt && self.tiles.len() < 2 && front_settled {
+            let mut choice = None;
+            egui::Window::new("Tile side by side?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::RIGHT_TOP, [-12.0, 46.0])
+                .show(ui.ctx(), |ui| {
+                    ui.label("You have more than one document open. Show them next to each other?");
+                    ui.checkbox(&mut self.tile_remember, "Remember my choice");
+                    ui.horizontal(|ui| {
+                        if ui.button("Tile").clicked() {
+                            choice = Some(true);
+                        }
+                        if ui.button("Keep as tabs").clicked() {
+                            choice = Some(false);
+                        }
+                    });
+                });
+            if let Some(tile) = choice {
+                if self.tile_remember {
+                    self.tile_pref = if tile { TilePref::Always } else { TilePref::Never };
+                    self.tile_pref.save();
+                }
+                self.tile_prompt = false;
+                if tile {
+                    self.tile_all();
+                }
+            }
         }
         if let Some(v) = select {
             self.view = v;
@@ -1682,6 +2081,10 @@ impl eframe::App for Suite {
         }
         match self.view {
             View::Home => self.home(ui),
+            View::Tab(_) if self.tiled_ids().is_some() => {
+                let ids = self.tiled_ids().unwrap_or_default();
+                self.tile_ui(ui, frame, &ids);
+            }
             View::Tab(id) => {
                 let owner = self.ctx_owner;
                 let settling = self.settle > 0;
@@ -1750,7 +2153,10 @@ fn main() -> eframe::Result {
     if let Ok(p) = std::env::var("OFFICECRAFT_SHOT") {
         suite.shot = Some((p, 0));
     }
-    let selftest = suite.selftest.is_some() || suite.ai_selftest.is_some() || suite.shot.is_some();
+    if std::env::var_os("OFFICECRAFT_TILES").is_some() {
+        suite.tiles_test = Some(0);
+    }
+    let selftest = suite.selftest.is_some() || suite.ai_selftest.is_some() || suite.shot.is_some() || suite.tiles_test.is_some();
     if selftest {
         suite.persist = false;
     } else {
