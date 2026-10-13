@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OfficeCraft
+GenericName=Office suite
+Comment=Docs, sheets, slides and PDFs in one window
+Exec=officecraft %F
+Icon=ai.storyteller.officecraft
+Terminal=false
+Categories=Office;WordProcessor;Spreadsheet;Presentation;
+StartupWMClass=ai.storyteller.officecraft
+MimeType=application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/pdf;

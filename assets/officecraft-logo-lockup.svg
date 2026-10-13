@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 360" width="1160" height="360" role="img" aria-label="OfficeCraft">
+  <title>OfficeCraft</title>
+  <g transform="translate(20 20) scale(0.6875)">
+    <rect x="16" y="16" width="480" height="480" rx="112" fill="#2d4f6e"/>
+    <g>
+    <!-- Docs: top left, blue -->
+    <g transform="translate(91 91)">
+      <g>
+        <rect width="150" height="150" rx="36" fill="#3f5fe0"/>
+        <g fill="#fff">
+          <rect  x="32" y="34" width="86" height="10" rx="5"/>
+          <rect   x="32" y="56" width="62" height="10" rx="5" opacity=".85"/>
+          <rect  x="32" y="78" width="74" height="10" rx="5" opacity=".85"/>
+          <rect   x="32" y="100" width="40" height="10" rx="5" opacity=".85"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- Slides: top right, orange -->
+    <g transform="translate(271 91)">
+      <g>
+        <rect width="150" height="150" rx="36" fill="#f07a1e"/>
+        <g fill="#fff">
+          <rect  x="34" y="28" width="50" height="9" rx="4.5"/>
+          <rect x="34" y="76" width="26" height="36" rx="6" opacity=".85"/>
+          <rect  x="62" y="50" width="26" height="62" rx="6"/>
+          <rect x="90" y="64" width="26" height="48" rx="6" opacity=".85"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- Sheets: bottom left, green -->
+    <g transform="translate(91 271)">
+      <g>
+        <rect width="150" height="150" rx="36" fill="#1f9d55"/>
+        <g fill="#fff">
+          <rect x="32" y="34" width="26" height="22" rx="5"/>
+          <rect x="64" y="34" width="26" height="22" rx="5"/>
+          <rect x="96" y="34" width="26" height="22" rx="5"/>
+          <rect x="32" y="62" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect x="64" y="62" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect x="96" y="62" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect x="32" y="90" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect x="64" y="90" width="26" height="22" rx="5" fill-opacity=".7"/>
+          <rect x="96" y="90" width="26" height="22" rx="5" fill-opacity=".7"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- PDF: bottom right, teal -->
+    <g transform="translate(271 271)">
+      <g>
+        <rect width="150" height="150" rx="36" fill="#12a58a"/>
+        <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+          <path pathLength="100" stroke-width="8"
+                d="M46 28 H86 L106 48 V122 H46 Z"/>
+          <path  pathLength="100" stroke-width="8" d="M86 28 V48 H106"/>
+          <path  stroke-width="7" opacity=".85" d="M60 78 H92"/>
+          <path stroke-width="7" opacity=".85" d="M60 96 H80"/>
+        </g>
+      </g>
+    </g>
+  </g>
+  </g>
+  <text x="400" y="222" font-family="'Inter','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif" font-size="136" font-weight="700" letter-spacing="-4" fill="#2d4f6e">Office<tspan fill="#3f5fe0">Craft</tspan></text>
+  <text x="404" y="282" font-family="'Inter','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif" font-size="30" font-weight="500" letter-spacing="6" fill="#5b7288">DOCS · SHEETS · SLIDES · PDF</text>
+</svg>

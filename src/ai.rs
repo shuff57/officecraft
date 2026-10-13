@@ -3,10 +3,14 @@
 //!
 //! The model is any OpenAI-compatible chat endpoint. Settings come from
 //! `~/.config/officecraft/ai.json` (`base_url`, `model`); a key, if the endpoint wants one, is
-//! read from `OFFICECRAFT_AI_KEY` and never written anywhere.
+//! read from Settings (kept in an owner-only `ai-keys.json`) or `OFFICECRAFT_AI_KEY`.
 
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
+
+use web_time::Instant;
+
+use crate::platform;
 
 use serde_json::{Value, json};
 
@@ -17,25 +21,391 @@ const DEFAULT_BASE: &str = "http://127.0.0.1:11434/v1";
 // OFFICECRAFT_AI_MODEL (qwen3-coder:30b is far better at multi-step edits).
 const DEFAULT_MODEL: &str = "qwen3-coder:30b";
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Provider {
+    Local,
+    Cloud,
+    OpenRouter,
+}
+
+impl Provider {
+    pub const ALL: [Provider; 3] = [Provider::Local, Provider::Cloud, Provider::OpenRouter];
+    fn index(self) -> usize {
+        self as usize
+    }
+    fn id(self) -> &'static str {
+        match self {
+            Provider::Local => "local",
+            Provider::Cloud => "cloud",
+            Provider::OpenRouter => "openrouter",
+        }
+    }
+    fn from_id(s: &str) -> Option<Provider> {
+        Provider::ALL.into_iter().find(|p| p.id() == s)
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            Provider::Local => "Local endpoint",
+            Provider::Cloud => "Ollama Cloud",
+            Provider::OpenRouter => "OpenRouter",
+        }
+    }
+    fn default_base(self) -> &'static str {
+        match self {
+            Provider::Local => DEFAULT_BASE,
+            Provider::Cloud => "https://ollama.com/v1",
+            Provider::OpenRouter => "https://openrouter.ai/api/v1",
+        }
+    }
+    fn default_model(self) -> &'static str {
+        match self {
+            Provider::Local => DEFAULT_MODEL,
+            Provider::Cloud => "gpt-oss:120b",
+            Provider::OpenRouter => "openai/gpt-oss-120b",
+        }
+    }
+}
+
+/// Where the assistant talks to. `base_url`, `model` and `key` are the ones in use right now (the
+/// active provider's, or an `OFFICECRAFT_AI_*` environment override); the rest is what Settings edits.
 #[derive(Clone)]
 pub struct Config {
     pub base_url: String,
     pub model: String,
     key: Option<String>,
+    pub provider: Provider,
+    /// The endpoint of the local server (Ollama, LM Studio, llama.cpp, vLLM: anything OpenAI-compatible).
+    pub local_url: String,
+    /// The chosen model for each provider, in `Provider::ALL` order; empty = that provider's default.
+    models: [String; 3],
+    /// API keys for Ollama Cloud and OpenRouter (`keys[provider.index()]`; the local slot is unused).
+    keys: [String; 3],
+}
+
+fn read_json(name: &str) -> Value {
+    platform::read(name).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)
 }
 
 impl Config {
     pub fn load() -> Config {
-        let file = std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("officecraft").join("ai.json"));
-        let json: Value = file.and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-        let get = |k: &str, d: &str| json.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(d).to_string();
-        Config {
-            base_url: std::env::var("OFFICECRAFT_AI_URL").unwrap_or_else(|_| get("base_url", DEFAULT_BASE)).trim_end_matches('/').to_string(),
-            model: std::env::var("OFFICECRAFT_AI_MODEL").unwrap_or_else(|_| get("model", DEFAULT_MODEL)),
-            key: std::env::var("OFFICECRAFT_AI_KEY").ok().filter(|k| !k.is_empty()),
+        let json = read_json("ai.json");
+        let keys_json = read_json("ai-keys.json");
+        let get = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let mut c = Config {
+            base_url: String::new(),
+            model: String::new(),
+            key: None,
+            provider: Provider::from_id(&get(&json, "provider")).unwrap_or(Provider::Local),
+            local_url: get(&json, "base_url"),
+            models: [get(&json, "model"), get(&json, "cloud_model"), get(&json, "openrouter_model")],
+            keys: [String::new(), get(&keys_json, "cloud"), get(&keys_json, "openrouter")],
+        };
+        c.apply();
+        c
+    }
+
+    /// Recomputes the values in use from the settings and the environment overrides.
+    pub fn apply(&mut self) {
+        let p = self.provider;
+        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let base = match p {
+            Provider::Local if !self.local_url.is_empty() => self.local_url.clone(),
+            _ => p.default_base().to_string(),
+        };
+        self.base_url = env("OFFICECRAFT_AI_URL").unwrap_or(base).trim_end_matches('/').to_string();
+        let model = &self.models[p.index()];
+        self.model = env("OFFICECRAFT_AI_MODEL").unwrap_or_else(|| if model.is_empty() { p.default_model().to_string() } else { model.clone() });
+        let key = &self.keys[p.index()];
+        self.key = env("OFFICECRAFT_AI_KEY").or_else(|| (!key.is_empty()).then(|| key.clone()));
+    }
+
+    pub fn set_model(&mut self, model: &str) {
+        self.models[self.provider.index()] = model.to_string();
+        self.apply();
+    }
+
+    /// True when an `OFFICECRAFT_AI_*` variable overrides what Settings says.
+    pub fn env_override() -> bool {
+        ["OFFICECRAFT_AI_URL", "OFFICECRAFT_AI_MODEL", "OFFICECRAFT_AI_KEY"].iter().any(|k| std::env::var(k).is_ok_and(|v| !v.is_empty()))
+    }
+
+    /// Writes `ai.json` (provider, endpoint, models) and, separately, `ai-keys.json` (owner-only).
+    pub fn save(&self) -> Result<(), String> {
+        let settings = json!({
+            "provider": self.provider.id(),
+            "base_url": self.local_url,
+            "model": self.models[0],
+            "cloud_model": self.models[1],
+            "openrouter_model": self.models[2],
+        });
+        platform::write("ai.json", &serde_json::to_string_pretty(&settings).unwrap_or_default())?;
+        let keys = json!({"cloud": self.keys[1], "openrouter": self.keys[2]});
+        platform::write_private("ai-keys.json", &serde_json::to_string_pretty(&keys).unwrap_or_default())
+    }
+}
+
+/// The Settings window's working copy; `ui` returns the config when the user saves.
+pub struct Settings {
+    draft: Config,
+    reveal: bool,
+    saved_note: String,
+    test: std::sync::Arc<std::sync::Mutex<Option<Result<usize, String>>>>,
+    /// The models the endpoint lists and what pinging each one found.
+    probe: std::sync::Arc<std::sync::Mutex<Probe>>,
+    /// OpenRouter: list only the `:free` models (what a free account can use).
+    free_only: bool,
+}
+
+/// What the Settings window knows about the endpoint's models.
+#[derive(Default)]
+struct Probe {
+    ids: Vec<String>,
+    /// Per model: `Ok(seconds)` when a one-word chat completion came back, else why not.
+    results: std::collections::HashMap<String, Result<f32, String>>,
+    testing: std::collections::HashSet<String>,
+    all_running: bool,
+    stop: bool,
+}
+
+impl Settings {
+    pub fn new(cfg: &Config) -> Settings {
+        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default(), probe: Default::default(), free_only: true }
+    }
+
+    /// `Some(Some(cfg))`: saved; `Some(None)`: closed without saving; `None`: still open.
+    pub fn ui(&mut self, ctx: &egui::Context) -> Option<Option<Config>> {
+        let mut result = None;
+        let mut open = true;
+        egui::Window::new("Assistant settings").open(&mut open).collapsible(false).resizable(false).default_width(500.0).show(ctx, |ui| {
+            let d = &mut self.draft;
+            ui.label(egui::RichText::new("Provider").strong());
+            ui.horizontal(|ui| {
+                for p in Provider::ALL {
+                    if ui.selectable_label(d.provider == p, p.title()).clicked() {
+                        d.provider = p;
+                        *self.test.lock().unwrap() = None;
+                        *self.probe.lock().unwrap() = Probe::default();
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            let p = d.provider;
+            egui::Grid::new("ai_settings_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                match p {
+                    Provider::Local => {
+                        ui.label("Endpoint");
+                        ui.add(egui::TextEdit::singleline(&mut d.local_url).hint_text(DEFAULT_BASE).desired_width(300.0));
+                        ui.end_row();
+                    }
+                    _ => {
+                        ui.label("Endpoint");
+                        ui.label(egui::RichText::new(p.default_base()).monospace());
+                        ui.end_row();
+                        ui.label("API key");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(&mut d.keys[p.index()]).password(!self.reveal).hint_text("paste your key").desired_width(260.0));
+                            ui.checkbox(&mut self.reveal, "Show");
+                        });
+                        ui.end_row();
+                    }
+                }
+                ui.label("Model");
+                ui.add(egui::TextEdit::singleline(&mut d.models[p.index()]).hint_text(p.default_model()).desired_width(300.0));
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(match p {
+                    Provider::Local => "Any OpenAI-compatible server: Ollama (http://127.0.0.1:11434/v1), LM Studio (http://127.0.0.1:1234/v1), llama.cpp, vLLM.",
+                    Provider::Cloud => "Large hosted models. Your prompts and documents are sent to ollama.com.",
+                    Provider::OpenRouter => "Many hosted models. Your prompts and documents are sent to openrouter.ai and on to the lab running the model.",
+                })
+                .size(12.0)
+                .weak(),
+            );
+            if p != Provider::Local {
+                ui.label(
+                    egui::RichText::new(if cfg!(target_arch = "wasm32") {
+                        "The key is kept in this browser's storage for this site. Anyone using this browser profile can read it."
+                    } else {
+                        "The key is kept in ~/.config/officecraft/ai-keys.json, readable only by you."
+                    })
+                    .size(12.0)
+                    .weak(),
+                );
+            }
+            if Config::env_override() {
+                ui.colored_label(egui::Color32::from_rgb(180, 110, 0), "An OFFICECRAFT_AI_* environment variable overrides these settings.");
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Test connection").clicked() {
+                    let mut probe = self.draft.clone();
+                    probe.apply();
+                    *self.test.lock().unwrap() = None;
+                    let slot = self.test.clone();
+                    let models = self.probe.clone();
+                    *models.lock().unwrap() = Probe::default();
+                    let ctx = ui.ctx().clone();
+                    spawn_task(async move {
+                        let r = fetch_models(&probe, 8).await;
+                        if let Ok(ids) = &r {
+                            models.lock().unwrap().ids = ids.clone();
+                        }
+                        *slot.lock().unwrap() = Some(r.map(|v| v.len()));
+                        ctx.request_repaint();
+                    });
+                }
+                match &*self.test.lock().unwrap() {
+                    Some(Ok(n)) => {
+                        ui.colored_label(egui::Color32::from_rgb(46, 125, 79), format!("Connected: {n} model{}", if *n == 1 { "" } else { "s" }));
+                    }
+                    Some(Err(e)) => {
+                        ui.colored_label(egui::Color32::from_rgb(194, 74, 47), e);
+                    }
+                    None => {}
+                }
+            });
+            self.model_list(ui);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(egui::RichText::new("Save").strong()).clicked() {
+                    let mut cfg = self.draft.clone();
+                    cfg.apply();
+                    match cfg.save() {
+                        Ok(()) => result = Some(Some(cfg)),
+                        Err(e) => self.saved_note = format!("Could not save: {e}"),
+                    }
+                }
+                if ui.button("Cancel").clicked() {
+                    result = Some(None);
+                }
+                if !self.saved_note.is_empty() {
+                    ui.colored_label(egui::Color32::from_rgb(194, 74, 47), &self.saved_note);
+                }
+            });
+        });
+        if !open && result.is_none() {
+            result = Some(None);
+        }
+        result
+    }
+}
+
+impl Settings {
+    /// The endpoint's models with a test ping each, so a free account can see which ones answer.
+    fn model_list(&mut self, ui: &mut egui::Ui) {
+        let (provider, chosen) = (self.draft.provider, self.draft.models[self.draft.provider.index()].clone());
+        let (listed, all_running) = {
+            let g = self.probe.lock().unwrap();
+            (g.ids.len(), g.all_running)
+        };
+        if listed == 0 {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Press Test connection to list the models, then test which ones your account can use.").size(12.0).weak());
+            return;
+        }
+        ui.add_space(6.0);
+        ui.separator();
+        let free_only = provider == Provider::OpenRouter && self.free_only;
+        let visible: Vec<String> = {
+            let g = self.probe.lock().unwrap();
+            g.ids.iter().filter(|id| !free_only || id.ends_with(":free")).cloned().collect()
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("Models ({})", visible.len())).strong());
+            if provider == Provider::OpenRouter {
+                ui.checkbox(&mut self.free_only, "Free only");
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if all_running {
+                    if ui.button("Stop").clicked() {
+                        self.probe.lock().unwrap().stop = true;
+                    }
+                } else if ui.button("Test all").on_hover_text("Ping each listed model once (the first 30), one after another").clicked() {
+                    let mut cfg = self.draft.clone();
+                    cfg.apply();
+                    let probe = self.probe.clone();
+                    {
+                        let mut g = probe.lock().unwrap();
+                        g.stop = false;
+                        g.all_running = true;
+                    }
+                    let ctx = ui.ctx().clone();
+                    let ids: Vec<String> = visible.iter().take(30).cloned().collect();
+                    spawn_task(async move {
+                        for id in ids {
+                            {
+                                let mut g = probe.lock().unwrap();
+                                if g.stop {
+                                    break;
+                                }
+                                g.testing.insert(id.clone());
+                            }
+                            ctx.request_repaint();
+                            let r = ping_model(&cfg, &id).await;
+                            let mut g = probe.lock().unwrap();
+                            g.testing.remove(&id);
+                            g.results.insert(id, r);
+                            drop(g);
+                            ctx.request_repaint();
+                        }
+                        probe.lock().unwrap().all_running = false;
+                        ctx.request_repaint();
+                    });
+                }
+            });
+        });
+        let green = egui::Color32::from_rgb(46, 125, 79);
+        let red = egui::Color32::from_rgb(194, 74, 47);
+        let mut pick: Option<String> = None;
+        let mut ping: Option<String> = None;
+        egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
+            let g = self.probe.lock().unwrap();
+            for id in &visible {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(*id == chosen, id).on_hover_text("Use this model").clicked() {
+                        pick = Some(id.clone());
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let busy = g.testing.contains(id);
+                        if ui.add_enabled(!busy, egui::Button::new("Test").small()).clicked() {
+                            ping = Some(id.clone());
+                        }
+                        if busy {
+                            ui.spinner();
+                        }
+                        match g.results.get(id) {
+                            Some(Ok(secs)) => {
+                                ui.colored_label(green, format!("✓ available · {secs:.1}s"));
+                            }
+                            Some(Err(e)) => {
+                                let short: String = if e.chars().count() > 34 { e.chars().take(33).collect::<String>() + "…" } else { e.clone() };
+                                ui.colored_label(red, format!("✗ {short}")).on_hover_text(e);
+                            }
+                            None => {}
+                        }
+                    });
+                });
+            }
+        });
+        if let Some(id) = pick {
+            self.draft.models[provider.index()] = id;
+        }
+        if let Some(id) = ping {
+            let mut cfg = self.draft.clone();
+            cfg.apply();
+            let probe = self.probe.clone();
+            probe.lock().unwrap().testing.insert(id.clone());
+            let ctx = ui.ctx().clone();
+            spawn_task(async move {
+                let r = ping_model(&cfg, &id).await;
+                let mut g = probe.lock().unwrap();
+                g.testing.remove(&id);
+                g.results.insert(id, r);
+                drop(g);
+                ctx.request_repaint();
+            });
         }
     }
 }
@@ -110,6 +480,8 @@ pub enum Action {
     Send,
     /// A model was picked in the header: remember it.
     SetModel(String),
+    /// The panel's settings icon was pressed.
+    OpenSettings,
 }
 
 /// A streaming reply's events.
@@ -133,7 +505,7 @@ pub struct Chat {
     /// Which request's events count (Stop bumps it so a late reply is dropped).
     epoch: u64,
     /// When the current request began.
-    started: Option<std::time::Instant>,
+    started: Option<Instant>,
     /// How long the last answer took.
     took: Option<f32>,
     /// The composer should take the keyboard.
@@ -249,6 +621,9 @@ impl Chat {
             paint_spark(ui.painter(), r, accent);
             ui.label(egui::RichText::new("Assistant").strong().size(15.0).color(ink));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(egui::Button::new(egui::RichText::new("⚙").size(14.0).color(muted)).frame(false)).on_hover_text("Assistant settings: provider, endpoint, API keys, test models").clicked() {
+                    action = Some(Action::OpenSettings);
+                }
                 let can_new = !self.items.is_empty() && !busy;
                 let r = ui.add_enabled(can_new, egui::Button::new(egui::RichText::new("New chat").size(12.0)).small()).on_hover_text("Start a new conversation");
                 if r.clicked() {
@@ -398,7 +773,7 @@ impl Chat {
         self.history.push(json!({"role": "user", "content": text}));
         self.steps = 0;
         self.took = None;
-        self.started = Some(std::time::Instant::now());
+        self.started = Some(Instant::now());
         self.focus_input = true;
         self.ask(app, cfg, ctx);
     }
@@ -414,8 +789,8 @@ impl Chat {
         let ctx = ctx.clone();
         let epoch = self.epoch;
         let _ = epoch;
-        std::thread::spawn(move || {
-            stream_request(&cfg, messages, tool_list, &tx, &ctx);
+        spawn_task(async move {
+            stream_request(&cfg, messages, tool_list, &tx, &ctx).await;
             ctx.request_repaint();
         });
     }
@@ -1301,14 +1676,197 @@ fn filter_commands(v: Value, filter: &str) -> Value {
     json!({"total": total, "shown": keep.len(), "commands": keep})
 }
 
+/// Runs `fut` off the UI thread: a worker thread natively (the blocking HTTP client parks in
+/// it), the browser's event loop on the web.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_task(fut: impl std::future::Future<Output = ()> + Send + 'static) {
+    std::thread::spawn(move || block_on(fut));
+}
+
+#[cfg(target_arch = "wasm32")]
+fn spawn_task(fut: impl std::future::Future<Output = ()> + 'static) {
+    wasm_bindgen_futures::spawn_local(fut);
+}
+
+/// Drives a future whose awaits never actually wait (the native transport blocks inside them).
+#[cfg(not(target_arch = "wasm32"))]
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    use std::task::{Context, Poll, Wake, Waker};
+    struct Noop;
+    impl Wake for Noop {
+        fn wake(self: std::sync::Arc<Self>) {}
+    }
+    let waker = Waker::from(std::sync::Arc::new(Noop));
+    let mut cx = Context::from_waker(&waker);
+    let mut fut = std::pin::pin!(fut);
+    loop {
+        if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// A reply being assembled from server-sent events, one `data:` line at a time.
+#[derive(Default)]
+struct StreamAcc {
+    content: String,
+    /// Tool calls arrive in pieces keyed by index: (id, name, arguments so far).
+    calls: Vec<(String, String, String)>,
+    saw_event: bool,
+}
+
+impl StreamAcc {
+    /// Takes one line of the stream. `Ok(true)` once the server said `[DONE]`.
+    fn feed(&mut self, line: &str, url: &str, tx: &std::sync::mpsc::Sender<Ev>, ctx: &egui::Context) -> Result<bool, String> {
+        let Some(data) = line.strip_prefix("data:") else { return Ok(false) };
+        let data = data.trim();
+        if data == "[DONE]" {
+            return Ok(true);
+        }
+        let Ok(v) = serde_json::from_str::<Value>(data) else { return Ok(false) };
+        if let Some(e) = v.pointer("/error/message").and_then(Value::as_str) {
+            return Err(format!("{url}: {e}"));
+        }
+        self.saw_event = true;
+        let Some(delta) = v.pointer("/choices/0/delta") else { return Ok(false) };
+        if let Some(t) = delta.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+            self.content.push_str(t);
+            let _ = tx.send(Ev::Text(t.to_string()));
+            ctx.request_repaint();
+        }
+        if let Some(tcs) = delta.get("tool_calls").and_then(Value::as_array) {
+            for tc in tcs {
+                let i = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                while self.calls.len() <= i {
+                    self.calls.push((String::new(), String::new(), String::new()));
+                }
+                if let Some(id) = tc.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                    self.calls[i].0 = id.to_string();
+                }
+                if let Some(f) = tc.get("function") {
+                    if let Some(n) = f.get("name").and_then(Value::as_str) {
+                        self.calls[i].1.push_str(n);
+                    }
+                    if let Some(a) = f.get("arguments").and_then(Value::as_str) {
+                        self.calls[i].2.push_str(a);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// The whole assistant message, with its tool calls.
+    fn finish(self, url: &str) -> Result<Value, String> {
+        let StreamAcc { mut content, mut calls, saw_event } = self;
+        if !saw_event {
+            return Err(format!("{url} did not stream a reply."));
+        }
+        // Some models write their tool calls as text (`<function=name><parameter=key>value...`) and the
+        // server does not always turn that into a structured call: do it here.
+        if calls.iter().all(|(_, n, _)| n.is_empty()) && content.contains("<function=") {
+            let (text, found) = salvage_tool_calls(&content);
+            if !found.is_empty() {
+                content = text;
+                calls = found;
+            }
+        }
+        let mut msg = json!({"role": "assistant", "content": content});
+        let calls: Vec<Value> = calls
+            .into_iter()
+            .enumerate()
+            .filter(|(_, (_, n, _))| !n.is_empty())
+            .map(|(i, (id, name, args))| {
+                let id = if id.is_empty() { format!("call_{i}") } else { id };
+                json!({"id": id, "type": "function", "function": {"name": name, "arguments": if args.is_empty() { "{}".to_string() } else { args }}})
+            })
+            .collect();
+        if !calls.is_empty() {
+            msg["tool_calls"] = Value::Array(calls);
+        }
+        Ok(msg)
+    }
+}
+
+/// The server's own words for a failed request.
+fn error_message(url: &str, status: u16, body: &str) -> String {
+    let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let msg = v.pointer("/error/message").and_then(Value::as_str).or_else(|| v.get("error").and_then(Value::as_str)).unwrap_or("request failed");
+    format!("{url} answered {status}: {msg}")
+}
+
+/// Why a ping failed, in words a free-tier user can act on.
+fn explain_status(status: u16, body: &str) -> String {
+    let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let msg = v.pointer("/error/message").and_then(Value::as_str).or_else(|| v.get("error").and_then(Value::as_str)).unwrap_or("").trim();
+    let why = match status {
+        401 | 403 => "not available on this account",
+        402 => "needs credits or a paid plan",
+        404 => "model not found",
+        429 => "rate limited, try again shortly",
+        _ => "request failed",
+    };
+    if msg.is_empty() { format!("{why} (HTTP {status})") } else { format!("{why}: {msg} (HTTP {status})") }
+}
+
+/// One tiny, non-streamed chat completion: `Ok(seconds)` when the model answered.
+async fn ping_model(cfg: &Config, model: &str) -> Result<f32, String> {
+    let url = format!("{}/chat/completions", cfg.base_url);
+    let body = json!({"model": model, "messages": [{"role": "user", "content": "Reply with the single word: ok"}], "max_tokens": 16, "stream": false});
+    let t0 = Instant::now();
+    let (status, text) = post_json(&url, cfg.key.as_deref(), &body, 45).await?;
+    if !(200..300).contains(&status) {
+        return Err(explain_status(status, &text));
+    }
+    // Some gateways answer 200 and put the refusal in the body.
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if let Some(m) = v.pointer("/error/message").and_then(Value::as_str) {
+        return Err(m.to_string());
+    }
+    Ok(t0.elapsed().as_secs_f32())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn post_json(url: &str, key: Option<&str>, body: &Value, timeout_secs: u64) -> Result<(u16, String), String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(timeout_secs))).http_status_as_error(false).build().into();
+    let mut req = agent.post(url);
+    if let Some(k) = key {
+        req = req.header("Authorization", &format!("Bearer {k}"));
+    }
+    let mut resp = req.header("Content-Type", "application/json").send(body.to_string()).map_err(|e| format!("Can't reach {url}: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().unwrap_or_default();
+    Ok((status, text))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn post_json(url: &str, key: Option<&str>, body: &Value, timeout_secs: u64) -> Result<(u16, String), String> {
+    let resp = fetch(url, "POST", key, Some(body.to_string()), timeout_secs).await?;
+    let status = resp.status();
+    Ok((status, response_text(&resp).await.unwrap_or_default()))
+}
+
+/// A model list from a `GET /models` body.
+fn parse_models(status: u16, text: &str) -> Result<Vec<String>, String> {
+    if !(200..300).contains(&status) {
+        let hint = if status == 401 || status == 403 { " (check the API key)" } else { "" };
+        return Err(format!("HTTP {status}{hint}"));
+    }
+    let v: Value = serde_json::from_str(text).map_err(|_| "The endpoint did not return a model list".to_string())?;
+    let list = v.get("data").and_then(Value::as_array).cloned().unwrap_or_default();
+    Ok(list.iter().filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string)).collect())
+}
+
 /// One chat-completions round trip, streamed: the words go to `tx` as they arrive, and the whole
 /// assistant message (with its tool calls) comes last.
-fn stream_request(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std::sync::mpsc::Sender<Ev>, ctx: &egui::Context) {
-    let r = stream_inner(cfg, messages, tools, tx, ctx);
+async fn stream_request(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std::sync::mpsc::Sender<Ev>, ctx: &egui::Context) {
+    let r = stream_inner(cfg, messages, tools, tx, ctx).await;
     let _ = tx.send(Ev::Done(r));
 }
 
-fn stream_inner(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std::sync::mpsc::Sender<Ev>, ctx: &egui::Context) -> Result<Value, String> {
+#[cfg(not(target_arch = "wasm32"))]
+async fn stream_inner(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std::sync::mpsc::Sender<Ev>, ctx: &egui::Context) -> Result<Value, String> {
     use std::io::{BufRead, BufReader};
     let url = format!("{}/chat/completions", cfg.base_url);
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(300))).http_status_as_error(false).build().into();
@@ -1321,86 +1879,136 @@ fn stream_inner(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std::sync
     let status = resp.status().as_u16();
     if !(200..300).contains(&status) {
         let text = resp.body_mut().read_to_string().unwrap_or_default();
-        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        let msg = v.pointer("/error/message").and_then(Value::as_str).or_else(|| v.get("error").and_then(Value::as_str)).unwrap_or("request failed");
-        return Err(format!("{url} answered {status}: {msg}"));
+        return Err(error_message(&url, status, &text));
     }
-    let mut content = String::new();
-    // Tool calls arrive in pieces keyed by index: (id, name, arguments so far).
-    let mut calls: Vec<(String, String, String)> = Vec::new();
+    let mut acc = StreamAcc::default();
     let reader = BufReader::new(resp.body_mut().as_reader());
-    let mut saw_event = false;
     for line in reader.lines() {
         let line = line.map_err(|e| format!("The stream from {url} broke: {e}"))?;
-        let Some(data) = line.strip_prefix("data:") else { continue };
-        let data = data.trim();
-        if data == "[DONE]" {
+        if acc.feed(&line, &url, tx, ctx)? {
             break;
         }
-        let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
-        if let Some(e) = v.pointer("/error/message").and_then(Value::as_str) {
-            return Err(format!("{url}: {e}"));
+    }
+    acc.finish(&url)
+}
+
+/// The browser's `fetch`, with the response body read chunk by chunk.
+#[cfg(target_arch = "wasm32")]
+async fn stream_inner(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std::sync::mpsc::Sender<Ev>, ctx: &egui::Context) -> Result<Value, String> {
+    use wasm_bindgen::JsCast as _;
+    let url = format!("{}/chat/completions", cfg.base_url);
+    let body = json!({"model": cfg.model, "messages": messages, "tools": tools, "stream": true});
+    let resp = fetch(&url, "POST", cfg.key.as_deref(), Some(body.to_string()), 300).await?;
+    let status = resp.status();
+    if !(200..300).contains(&status) {
+        let text = response_text(&resp).await.unwrap_or_default();
+        return Err(error_message(&url, status, &text));
+    }
+    let stream = resp.body().ok_or_else(|| format!("{url} did not stream a reply."))?;
+    let reader: web_sys::ReadableStreamDefaultReader = stream.get_reader().dyn_into().map_err(|_| "no stream reader".to_string())?;
+    let mut acc = StreamAcc::default();
+    let mut pending: Vec<u8> = Vec::new();
+    'read: loop {
+        let chunk = wasm_bindgen_futures::JsFuture::from(reader.read()).await.map_err(|e| format!("The stream from {url} broke: {e:?}"))?;
+        let done = js_sys::Reflect::get(&chunk, &"done".into()).ok().and_then(|d| d.as_bool()).unwrap_or(true);
+        if let Ok(value) = js_sys::Reflect::get(&chunk, &"value".into())
+            && !value.is_undefined()
+        {
+            pending.extend(js_sys::Uint8Array::new(&value).to_vec());
         }
-        saw_event = true;
-        let Some(delta) = v.pointer("/choices/0/delta") else { continue };
-        if let Some(t) = delta.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
-            content.push_str(t);
-            let _ = tx.send(Ev::Text(t.to_string()));
-            ctx.request_repaint();
-        }
-        if let Some(tcs) = delta.get("tool_calls").and_then(Value::as_array) {
-            for tc in tcs {
-                let i = tc.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
-                while calls.len() <= i {
-                    calls.push((String::new(), String::new(), String::new()));
-                }
-                if let Some(id) = tc.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                    calls[i].0 = id.to_string();
-                }
-                if let Some(f) = tc.get("function") {
-                    if let Some(n) = f.get("name").and_then(Value::as_str) {
-                        calls[i].1.push_str(n);
-                    }
-                    if let Some(a) = f.get("arguments").and_then(Value::as_str) {
-                        calls[i].2.push_str(a);
-                    }
-                }
+        // Whole lines only: a chunk can end in the middle of one (or of a UTF-8 character).
+        while let Some(nl) = pending.iter().position(|b| *b == b'\n') {
+            let line: Vec<u8> = pending.drain(..=nl).collect();
+            let line = String::from_utf8_lossy(&line);
+            if acc.feed(line.trim_end_matches(['\r', '\n']), &url, tx, ctx)? {
+                break 'read;
             }
         }
-    }
-    if !saw_event {
-        return Err(format!("{url} did not stream a reply."));
-    }
-    // Some models write their tool calls as text (`<function=name><parameter=key>value...`) and the
-    // server does not always turn that into a structured call: do it here.
-    if calls.iter().all(|(_, n, _)| n.is_empty()) && content.contains("<function=") {
-        let (text, found) = salvage_tool_calls(&content);
-        if !found.is_empty() {
-            content = text;
-            calls = found;
+        if done {
+            if !pending.is_empty() {
+                let line = String::from_utf8_lossy(&pending).into_owned();
+                acc.feed(line.trim_end_matches(['\r', '\n']), &url, tx, ctx)?;
+            }
+            break;
         }
     }
-    let mut msg = json!({"role": "assistant", "content": content});
-    let calls: Vec<Value> = calls
-        .into_iter()
-        .enumerate()
-        .filter(|(_, (_, n, _))| !n.is_empty())
-        .map(|(i, (id, name, args))| {
-            let id = if id.is_empty() { format!("call_{i}") } else { id };
-            json!({"id": id, "type": "function", "function": {"name": name, "arguments": if args.is_empty() { "{}".to_string() } else { args }}})
-        })
-        .collect();
-    if !calls.is_empty() {
-        msg["tool_calls"] = Value::Array(calls);
+    let _ = wasm_bindgen_futures::JsFuture::from(reader.cancel()).await;
+    acc.finish(&url)
+}
+
+/// `GET {base}/models` with the key, as a list of ids.
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_models(cfg: &Config, timeout_secs: u64) -> Result<Vec<String>, String> {
+    let url = format!("{}/models", cfg.base_url);
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(timeout_secs))).http_status_as_error(false).build().into();
+    let mut req = agent.get(&url);
+    if let Some(k) = &cfg.key {
+        req = req.header("Authorization", &format!("Bearer {k}"));
     }
-    Ok(msg)
+    let mut resp = req.call().map_err(|e| format!("Can't reach {url}: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    parse_models(status, &text)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_models(cfg: &Config, timeout_secs: u64) -> Result<Vec<String>, String> {
+    let url = format!("{}/models", cfg.base_url);
+    let resp = fetch(&url, "GET", cfg.key.as_deref(), None, timeout_secs).await?;
+    let status = resp.status();
+    let text = response_text(&resp).await?;
+    parse_models(status, &text)
+}
+
+/// `fetch(url)` with a JSON body, an optional bearer key and a timeout.
+#[cfg(target_arch = "wasm32")]
+async fn fetch(url: &str, method: &str, key: Option<&str>, body: Option<String>, timeout_secs: u64) -> Result<web_sys::Response, String> {
+    use wasm_bindgen::JsCast as _;
+    let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
+    let headers = web_sys::Headers::new().map_err(js)?;
+    if let Some(k) = key {
+        headers.set("Authorization", &format!("Bearer {k}")).map_err(js)?;
+    }
+    let init = web_sys::RequestInit::new();
+    init.set_method(method);
+    init.set_mode(web_sys::RequestMode::Cors);
+    if let Some(b) = body {
+        headers.set("Content-Type", "application/json").map_err(js)?;
+        init.set_body(&wasm_bindgen::JsValue::from_str(&b));
+    }
+    init.set_headers(&headers);
+    let signal = web_sys::AbortSignal::timeout_with_u32(u32::try_from(timeout_secs.saturating_mul(1000)).unwrap_or(u32::MAX));
+    init.set_signal(Some(&signal));
+    let window = web_sys::window().ok_or("no window")?;
+    let promise = window.fetch_with_str_and_init(url, &init);
+    let resp = wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|_| {
+        // The page cannot tell a CORS refusal from a server that is not there.
+        format!("Can't reach {url}. The server may be off, or it does not allow requests from this page (CORS).")
+    })?;
+    resp.dyn_into::<web_sys::Response>().map_err(|_| "not a response".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn response_text(resp: &web_sys::Response) -> Result<String, String> {
+    let promise = resp.text().map_err(|e| format!("{e:?}"))?;
+    let v = wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|e| format!("{e:?}"))?;
+    Ok(v.as_string().unwrap_or_default())
+}
+
+static MODELS: std::sync::OnceLock<std::sync::Mutex<(bool, Vec<String>)>> = std::sync::OnceLock::new();
+
+/// Forget the cached model list (the provider or endpoint changed); the next `models` refetches.
+pub fn refresh_models() {
+    if let Some(c) = MODELS.get()
+        && let Ok(mut g) = c.lock()
+    {
+        *g = (false, Vec::new());
+    }
 }
 
 /// The model ids the server offers (`GET /models`), fetched once in the background.
 pub fn models(cfg: &Config, ctx: &egui::Context) -> Vec<String> {
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<(bool, Vec<String>)>> = OnceLock::new();
-    let cell = CACHE.get_or_init(|| Mutex::new((false, Vec::new())));
+    let cell = MODELS.get_or_init(|| std::sync::Mutex::new((false, Vec::new())));
     let start = {
         let Ok(mut g) = cell.lock() else { return Vec::new() };
         let start = !g.0;
@@ -1410,22 +2018,9 @@ pub fn models(cfg: &Config, ctx: &egui::Context) -> Vec<String> {
     if start {
         let cfg = cfg.clone();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
-            let url = format!("{}/models", cfg.base_url);
-            let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(8))).http_status_as_error(false).build().into();
-            let mut req = agent.get(&url);
-            if let Some(k) = &cfg.key {
-                req = req.header("Authorization", &format!("Bearer {k}"));
-            }
-            let ids: Vec<String> = req
-                .call()
-                .ok()
-                .and_then(|mut r| r.body_mut().read_to_string().ok())
-                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-                .and_then(|v| v.get("data").and_then(Value::as_array).cloned())
-                .map(|a| a.iter().filter_map(|m| m.get("id").and_then(Value::as_str).map(str::to_string)).collect())
-                .unwrap_or_default();
-            if let Some(c) = CACHE.get()
+        spawn_task(async move {
+            let ids = fetch_models(&cfg, 8).await.unwrap_or_default();
+            if let Some(c) = MODELS.get()
                 && let Ok(mut g) = c.lock()
             {
                 g.1 = ids;
@@ -1434,25 +2029,6 @@ pub fn models(cfg: &Config, ctx: &egui::Context) -> Vec<String> {
         });
     }
     cell.lock().map(|g| g.1.clone()).unwrap_or_default()
-}
-
-/// Remembers the chosen model in `ai.json` (the key is never written).
-pub fn save_model(model: &str) {
-    let Some(path) = std::env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-        .map(|c| c.join("officecraft").join("ai.json"))
-    else {
-        return;
-    };
-    let mut v: Value = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| json!({}));
-    if let Some(o) = v.as_object_mut() {
-        o.insert("model".into(), json!(model));
-    }
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(path, serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 /// Tool calls written as `<function=NAME><parameter=KEY>VALUE</parameter>...</function>` in the
@@ -1535,5 +2111,48 @@ mod tests {
         assert_eq!(describe("build_slides", &json!({"slides": [{}]})), "Added 1 slide");
         assert_eq!(describe("run_command", &json!({"command": "format.bold"})), "Ran Format bold");
         assert!(is_read_only("get_text", &json!({})) && !is_read_only("insert_blocks", &json!({})));
+    }
+
+    #[test]
+    fn settings_round_trip_and_keep_keys_in_their_own_private_file() {
+        let dir = std::env::temp_dir().join(format!("officecraft-ai-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // SAFETY: no other test reads the environment or the config directory.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &dir);
+            for k in ["OFFICECRAFT_AI_URL", "OFFICECRAFT_AI_MODEL", "OFFICECRAFT_AI_KEY"] {
+                std::env::remove_var(k);
+            }
+        }
+        let mut c = Config::load();
+        assert_eq!((c.provider, c.base_url.as_str(), c.model.as_str()), (Provider::Local, DEFAULT_BASE, DEFAULT_MODEL));
+        c.local_url = "http://127.0.0.1:1234/v1/".into();
+        c.keys[1] = "cloud-secret".into();
+        c.keys[2] = "router-secret".into();
+        c.provider = Provider::OpenRouter;
+        c.apply();
+        c.save().unwrap();
+        let settings = std::fs::read_to_string(dir.join("officecraft/ai.json")).unwrap();
+        assert!(!settings.contains("secret"), "a key leaked into ai.json");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("officecraft/ai-keys.json")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "keys file is readable by others");
+        }
+        let c = Config::load();
+        assert_eq!(c.provider, Provider::OpenRouter);
+        assert_eq!(c.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(c.model, "openai/gpt-oss-120b");
+        assert_eq!(c.key.as_deref(), Some("router-secret"));
+        let mut c = c;
+        c.provider = Provider::Local;
+        c.apply();
+        assert_eq!(c.base_url, "http://127.0.0.1:1234/v1");
+        assert_eq!(c.key, None);
+        c.provider = Provider::Cloud;
+        c.set_model("gpt-oss:20b");
+        assert_eq!((c.base_url.as_str(), c.model.as_str(), c.key.as_deref()), ("https://ollama.com/v1", "gpt-oss:20b", Some("cloud-secret")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -27,7 +27,9 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
   Set `XDG_CONFIG_HOME` to a temp dir when testing so your real session/recents aren't touched.
 - **Assistant config:** defaults to `http://127.0.0.1:11434/v1` (local Ollama), model `qwen3:0.6b`
   (small and fast on purpose, "will upgrade later"). Override with env `OFFICECRAFT_AI_URL` / `OFFICECRAFT_AI_MODEL`
-  or `~/.config/officecraft/ai.json` `{base_url, model}`. Key, if any: env `OFFICECRAFT_AI_KEY`. Never written to disk.
+  or the ⚙ Settings window in the tab bar (provider: local endpoint, Ollama Cloud, OpenRouter). Settings go to
+  `~/.config/officecraft/ai.json`; API keys go to `~/.config/officecraft/ai-keys.json` (mode 0600), never ai.json.
+  Env `OFFICECRAFT_AI_URL` / `_MODEL` / `_KEY` still override everything.
 
 ## Not verified / known gaps
 - **No visual check.** Every run was headless or log-only. Layout, Enter-to-send, scrolling, close prompt,
@@ -40,15 +42,13 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
 - `qwen3:0.6b` invents command ids unless told them; use `qwen3-coder:30b` for real work.
 
 ## Warnings
-1. **A second Claude session is editing this same directory.** It added a Graph tab (viSHual engine,
-   `Kind::Graph`, `ai::App::Graph`). viSHual is embedded like the other apps: path deps on
-   `../viSHual/crates/ui-egui` (`vishual-ui-egui`: `VishualApp`, `Services`, `control`) and `../viSHual/crates/mcp`
-   (`vishual-mcp`: tool definitions for the assistant). There is no wrapper file; `graph_services()` in `main.rs`
-   supplies file dialogs and the gallery path. The standalone app is `apps/vishual` in the viSHual repo.
-   Do not overwrite or revert them. Check `git status`/`git diff` before editing `main.rs`.
-2. **Installed binary is stale.** `~/.local/bin/officecraft` predates session restore, the model default and
-   the Graph tab. It was deliberately not refreshed because the current tree contains the other session's
-   unfinished work. Reinstall once that session is done: `install -Dm755 target/release/officecraft ~/.local/bin/officecraft`.
+1. **The Graph tab is hooked up again** (`Kind::Graph`, `ai::App::Graph`): viSHual is embedded like the
+   other apps through path deps on `../viSHual/crates/ui-egui` (`vishual-ui-egui`) and `../viSHual/crates/mcp`
+   (`vishual-mcp`), so building needs a sibling viSHual checkout on its `egui-port` branch (not pushed yet).
+   `graph_services()` in `main.rs` supplies file dialogs and the gallery path. The `unhook-graph` branch
+   is the build without it.
+2. **Installed binary is stale.** `~/.local/bin/officecraft` predates session restore and the model default.
+   Reinstall after the next build: `install -Dm755 target/release/officecraft ~/.local/bin/officecraft`.
    A running window keeps the old binary; closing it loses unsaved work, so ask first.
 3. **Four sibling repos carry uncommitted patches** `context_changed()` (7 to 8 lines each) in
    `crates/ui-egui/src/lib.rs` of `~/wordcraft`, `~/gridcraft`, `~/deckcraft`, `~/pdfcraft`. The shell needs them;
@@ -62,7 +62,7 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
 ## Next, in rough order
 1. Look at it: launch, click through Docs/Sheets/Slides/PDF and Home, report visual bugs.
 2. Save the four `context_changed()` diffs into `patches/` so the siblings can be rebuilt.
-3. Reinstall the build once the Graph tab work lands; relaunch.
+3. Reinstall the build; relaunch.
 4. Exercise the assistant on Sheets/Slides/PDF; try `qwen3-coder:30b`.
 5. Per-file tab rename after Save As; wire prefs/recovery; then consider the assistant's history and streaming.
 6. Optional milestone: tear-off windows via egui viewports (spike first).
