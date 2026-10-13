@@ -3,3 +3,6 @@ target/
 .msgbox/
 dist/
 .playwright-cli/
+
+# wrangler local state (holds the Cloudflare account id)
+/.wrangler/

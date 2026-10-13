@@ -79,6 +79,8 @@ fn graph_services() -> vishual_ui_egui::Services {
         #[cfg(target_arch = "wasm32")]
         pick_save: None,
         gallery_store: dir.map(|d| d.join("vishual-gallery.json")),
+        // links open in the system browser (the desktop default) or a new tab (web)
+        ..Default::default()
     }
 }
 
