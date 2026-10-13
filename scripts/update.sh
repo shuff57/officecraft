@@ -62,6 +62,11 @@ check)
   ;;
 apply)
   cd "$SOURCE_DIR"
+  # A build rewrites Cargo.lock, which would make every later update look like local changes and
+  # skip the pull. The committed lock is what gets built, so put it back before checking.
+  if [ "$(git status --porcelain --untracked-files=no | grep -v ' Cargo.lock$' | wc -l)" = 0 ]; then
+    git checkout -q -- Cargo.lock 2>/dev/null || true
+  fi
   if [ -z "$(git status --porcelain --untracked-files=no)" ] && git rev-parse '@{u}' >/dev/null 2>&1; then
     echo "== OfficeCraft: pulling"
     git pull --ff-only -q || echo "   (could not fast-forward; building the checkout as it is)"
