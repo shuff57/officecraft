@@ -1742,7 +1742,13 @@ impl Suite {
                     ui.add_space(4.0);
                     ui.label(b("OfficeCraft", 17.0));
                 });
-                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    let target = if cfg!(target_arch = "wasm32") { "web" } else { "desktop" };
+                    ui.label(egui::RichText::new(format!("{target} {}", env!("OFFICECRAFT_BUILD"))).size(10.0).color(MUTED))
+                        .on_hover_text("The commit this build came from. The desktop and web builds match when these agree.");
+                });
+                ui.add_space(8.0);
                 if side_row(ui, self.folder_sel.is_none(), false, "Recent", Some(self.recent.len()), false).0.clicked() {
                     select = Some(None);
                 }

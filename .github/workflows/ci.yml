@@ -1,0 +1,61 @@
+# Keeps the desktop and browser builds in step: every push builds both targets, and a push to
+# main publishes the browser build, so the web version cannot sit on an old commit.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Desktop build
+        run: cargo check --locked
+      - name: Browser build type-check
+        run: cargo check --locked --target wasm32-unknown-unknown
+      - name: Tests
+        run: cargo test --locked
+
+  deploy-web:
+    # Only from main, and only when Cloudflare credentials are configured as repository secrets.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Check credentials
+        id: creds
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then echo "ok=1" >> "$GITHUB_OUTPUT"; else echo "No Cloudflare secrets set; skipping deploy."; fi
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.ok == '1'
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.creds.outputs.ok == '1'
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        if: steps.creds.outputs.ok == '1'
+      - name: Install trunk
+        if: steps.creds.outputs.ok == '1'
+        run: cargo install trunk --locked --version 0.21.14
+      - name: Build and deploy
+        if: steps.creds.outputs.ok == '1'
+        run: ./scripts/deploy-web.sh
