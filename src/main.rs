@@ -13,6 +13,7 @@ use web::{deck_services, grid_services, word_services};
 type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
 mod ai;
+mod equation;
 mod platform;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
@@ -26,10 +27,20 @@ enum Kind {
     Deck,
     Pdf,
     Graph,
+    /// equaSHion: the equation editor with Copy as LaTeX, MathML, OMML, text, image and SVG.
+    Equation,
 }
 
 impl Kind {
-    const ALL: [Kind; 5] = [Kind::Word, Kind::Grid, Kind::Deck, Kind::Pdf, Kind::Graph];
+    const ALL: [Kind; 6] = [Kind::Word, Kind::Grid, Kind::Deck, Kind::Pdf, Kind::Graph, Kind::Equation];
+    /// Apps that bring their own fonts and layout (never tiled beside another app).
+    fn tileable(self) -> bool {
+        !matches!(self, Kind::Graph | Kind::Equation)
+    }
+    /// Whether the suite's assistant can work in this app.
+    fn has_assistant(self) -> bool {
+        self != Kind::Equation
+    }
     fn label(self) -> &'static str {
         match self {
             Kind::Word => "Docs",
@@ -37,6 +48,7 @@ impl Kind {
             Kind::Deck => "Slides",
             Kind::Pdf => "PDF",
             Kind::Graph => "Graph",
+            Kind::Equation => "Equations",
         }
     }
 }
@@ -48,6 +60,7 @@ enum Tab {
     Deck(Box<deckcraft_ui_egui::SlideApp>),
     Pdf(Box<pdfcraft_ui_egui::PdfCraftApp>),
     Graph(Box<vishual_ui_egui::VishualApp>),
+    Equation(Box<equation::EquationApp>),
 }
 
 /// File dialogs for the Graph tab and where its gallery is kept (`<config>/officecraft/`).
@@ -152,6 +165,7 @@ impl Tab {
             Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deckcraft_engine::Session::new(), deck_services()))),
             Kind::Pdf => Tab::Pdf(Box::new(pdfcraft_ui_egui::PdfCraftApp::new())),
             Kind::Graph => Tab::Graph(Box::new(vishual_ui_egui::VishualApp::new(graph_services()))),
+            Kind::Equation => Tab::Equation(Box::new(equation::EquationApp::new())),
         }
     }
 
@@ -161,7 +175,7 @@ impl Tab {
             Tab::Grid(a) => a.logic(ctx),
             Tab::Deck(a) => a.logic(ctx),
             Tab::Pdf(a) => eframe::App::logic(a.as_mut(), ctx, frame),
-            Tab::Graph(_) => {}
+            Tab::Graph(_) | Tab::Equation(_) => {}
         }
     }
 
@@ -171,7 +185,7 @@ impl Tab {
             Tab::Grid(a) => a.raw_input_hook(raw),
             Tab::Deck(a) => a.raw_input_hook(raw),
             Tab::Pdf(a) => eframe::App::raw_input_hook(a.as_mut(), ctx, raw),
-            Tab::Graph(_) => {}
+            Tab::Graph(_) | Tab::Equation(_) => {}
         }
     }
 
@@ -182,6 +196,7 @@ impl Tab {
             Tab::Deck(a) => a.ui(ui),
             Tab::Pdf(a) => eframe::App::ui(a.as_mut(), ui, frame),
             Tab::Graph(a) => a.ui(ui),
+            Tab::Equation(a) => a.ui(ui),
         }
     }
 }
@@ -252,6 +267,7 @@ impl Tab {
             Tab::Deck(a) => a.session.documents().iter().any(|d| d.is_dirty()),
             Tab::Pdf(a) => a.first_dirty().is_some(),
             Tab::Graph(a) => a.changed,
+            Tab::Equation(_) => false,
         }
     }
 
@@ -262,6 +278,7 @@ impl Tab {
             Tab::Word(a) => a.context_changed(),
             Tab::Deck(a) => a.context_changed(),
             Tab::Graph(a) => a.context_changed(ctx),
+            Tab::Equation(a) => a.context_changed(ctx),
             // GridCraft and PdfCraft keep their font state private: the shell puts their fonts
             // and style back itself (`Look`).
             Tab::Grid(_) | Tab::Pdf(_) => {}
@@ -281,7 +298,7 @@ impl Tab {
             Tab::Grid(a) => push(a.services.inbox.as_ref()),
             Tab::Deck(a) => push(a.services.inbox.as_ref()),
             Tab::Pdf(a) => push(Some(&a.startup_inbox)),
-            Tab::Graph(_) => {}
+            Tab::Graph(_) | Tab::Equation(_) => {}
         }
     }
 
@@ -302,6 +319,7 @@ impl Tab {
             #[cfg(target_arch = "wasm32")]
             Tab::Pdf(_) => Err("opening by path is not available in the browser".into()),
             Tab::Graph(a) => a.open_path(path),
+            Tab::Equation(_) => Err("equations are not files".into()),
         }
     }
 }
@@ -622,6 +640,7 @@ fn kind_color(kind: Option<Kind>) -> egui::Color32 {
         Some(Kind::Deck) => egui::Color32::from_rgb(212, 98, 46),
         Some(Kind::Pdf) => egui::Color32::from_rgb(194, 59, 69),
         Some(Kind::Graph) => egui::Color32::from_rgb(183, 121, 31),
+        Some(Kind::Equation) => egui::Color32::from_rgb(98, 76, 168),
         None => egui::Color32::GRAY,
     }
 }
@@ -767,6 +786,7 @@ fn kind_abbr(kind: Option<Kind>) -> &'static str {
         Some(Kind::Deck) => "Sl",
         Some(Kind::Pdf) => "Pd",
         Some(Kind::Graph) => "Gr",
+        Some(Kind::Equation) => "Eq",
         None => "?",
     }
 }
@@ -892,6 +912,14 @@ fn thumb(painter: &egui::Painter, kind: Option<Kind>, area: egui::Rect) {
                 })
                 .collect();
             painter.add(egui::Shape::line(pts, egui::Stroke::new(2.5, c)));
+        }
+        Some(Kind::Equation) => {
+            // A fraction: numerator, bar, denominator.
+            let card = egui::Rect::from_center_size(center, egui::vec2(100.0, 62.0));
+            painter.rect_filled(card, 3.0, paper);
+            r(36.0, 14.0, 28.0, 6.0, c, 2.0, card);
+            r(30.0, 29.0, 40.0, 3.0, line, 1.0, card);
+            r(36.0, 40.0, 28.0, 6.0, c, 2.0, card);
         }
         None => {}
     }
@@ -1060,15 +1088,15 @@ impl Suite {
         let n = self.entries.iter().filter(|e| e.kind == kind).count() + 1;
         self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), pdf_client: None });
         self.view = View::Tab(id);
-        if kind == Kind::Graph {
-            // The Graph tab brings its own fonts and layout; it is never tiled.
+        if !kind.tileable() {
+            // The Graph and Equations tabs bring their own fonts and layout; they are never tiled.
         } else if self.tiles.len() >= 2 {
             // Already tiled: the new document joins, the oldest tile steps back to its tab.
             self.tiles.push(id);
             while self.tiles.len() > MAX_TILES {
                 self.tiles.remove(0);
             }
-        } else if self.entries.iter().filter(|e| e.kind != Kind::Graph).count() >= 2 {
+        } else if self.entries.iter().filter(|e| e.kind.tileable()).count() >= 2 {
             match self.tile_pref {
                 TilePref::Ask => self.tile_prompt = true,
                 TilePref::Always => self.tile_all(),
@@ -1086,7 +1114,7 @@ impl Suite {
 
     /// Tiles the most recently opened tabs (up to `MAX_TILES`).
     fn tile_all(&mut self) {
-        let tileable: Vec<u64> = self.entries.iter().filter(|e| e.kind != Kind::Graph).map(|e| e.id).collect();
+        let tileable: Vec<u64> = self.entries.iter().filter(|e| e.kind.tileable()).map(|e| e.id).collect();
         self.tiles = tileable[tileable.len().saturating_sub(MAX_TILES)..].to_vec();
         if self.tiles.len() < 2 {
             self.tiles.clear();
@@ -1112,16 +1140,16 @@ impl Suite {
     /// Brings tab `id` into the tiles (starting a tiled view with the front tab if there is none),
     /// optionally at a drop position next to `at.0`.
     fn tile_with(&mut self, id: u64, at: Option<(u64, DropZone)>) {
-        if self.entries.iter().find(|e| e.id == id).is_none_or(|e| e.kind == Kind::Graph) {
+        if self.entries.iter().find(|e| e.id == id).is_none_or(|e| !e.kind.tileable()) {
             return;
         }
         if self.tiles.len() < 2 {
-            let tileable = |entries: &[Entry], t: u64| entries.iter().any(|e| e.id == t && e.kind != Kind::Graph);
+            let tileable = |entries: &[Entry], t: u64| entries.iter().any(|e| e.id == t && e.kind.tileable());
             let front = match self.view {
                 View::Tab(v) if v != id && tileable(&self.entries, v) => Some(v),
                 _ => None,
             };
-            let partner = front.or_else(|| self.entries.iter().rev().find(|e| e.id != id && e.kind != Kind::Graph).map(|e| e.id));
+            let partner = front.or_else(|| self.entries.iter().rev().find(|e| e.id != id && e.kind.tileable()).map(|e| e.id));
             let Some(p) = partner else { return };
             self.tiles = vec![p, id];
             self.tile_layout.clear();
@@ -1379,7 +1407,7 @@ impl Suite {
         let mut new_kind: Option<Kind> = None;
         let mut add_tab: Option<u64> = None;
         // Open documents that are not in the tiles: they can be added from a tile's "+" menu.
-        let others: Vec<(u64, String)> = self.entries.iter().filter(|e| e.kind != Kind::Graph && !self.tiles.contains(&e.id)).map(|e| (e.id, e.name.clone())).collect();
+        let others: Vec<(u64, String)> = self.entries.iter().filter(|e| e.kind.tileable() && !self.tiles.contains(&e.id)).map(|e| (e.id, e.name.clone())).collect();
         for (tid, rect) in rects.iter().copied() {
             let focused = self.view == View::Tab(tid);
             if !focused && pressed.is_some_and(|p| rect.contains(p)) {
@@ -1800,9 +1828,9 @@ impl Suite {
             }
 
             ui.add_space(18.0);
-            let starts = [(Kind::Word, "WordCraft", "Docs"), (Kind::Grid, "GridCraft", "Sheets"), (Kind::Deck, "DeckCraft", "Slides"), (Kind::Pdf, "PdfCraft", "PDF"), (Kind::Graph, "viSHual", "Graphs")];
+            let starts = [(Kind::Word, "WordCraft", "Docs"), (Kind::Grid, "GridCraft", "Sheets"), (Kind::Deck, "DeckCraft", "Slides"), (Kind::Pdf, "PdfCraft", "PDF"), (Kind::Graph, "viSHual", "Graphs"), (Kind::Equation, "equaSHion", "Equations")];
             ui.spacing_mut().item_spacing.x = 12.0;
-            ui.columns(5, |cols| {
+            ui.columns(6, |cols| {
                 for (col, (kind, label, sub)) in cols.iter_mut().zip(starts) {
                     let card = framed().inner_margin(egui::Margin::symmetric(12, 10)).show(col, |ui| {
                         ui.set_width(ui.available_width());
@@ -1835,6 +1863,7 @@ impl Suite {
                             (Filter::Only(Kind::Deck), "Slides"),
                             (Filter::Only(Kind::Pdf), "PDF"),
                             (Filter::Only(Kind::Graph), "Graphs"),
+                            (Filter::Only(Kind::Equation), "Equations"),
                         ] {
                             if pill(ui, want_filter == f, label).clicked() {
                                 want_filter = f;
@@ -2054,6 +2083,7 @@ impl ai::Host for TabHost<'_> {
                 Pending(client.send(method, params))
             }
             Tab::Graph(a) => Done(a.control(method, params)),
+            Tab::Equation(_) => Done(Err("the assistant does not work in the Equations tab".into())),
         }
     }
 }
@@ -2065,6 +2095,8 @@ fn ai_app(kind: Kind) -> ai::App {
         Kind::Deck => ai::App::Slides,
         Kind::Pdf => ai::App::Pdf,
         Kind::Graph => ai::App::Graph,
+        // Never asked: the Equations tab has no assistant (`Kind::has_assistant`).
+        Kind::Equation => ai::App::Docs,
     }
 }
 
@@ -2095,6 +2127,7 @@ impl eframe::App for Suite {
                     "slides" => Some(Kind::Deck),
                     "pdf" => Some(Kind::Pdf),
                     "graph" => Some(Kind::Graph),
+                    "equations" => Some(Kind::Equation),
                     _ => None,
                 };
                 shot_tab = kind;
@@ -2232,14 +2265,15 @@ impl eframe::App for Suite {
                 }
             }
             let step = (n / EVERY) as usize;
-            if step >= 12 {
+            if step >= 20 {
                 eprintln!("selftest: cycled {step} views without a panic");
                 std::process::exit(0);
             }
             if n % EVERY == 0 {
                 let ids: Vec<u64> = self.entries.iter().map(|e| e.id).collect();
-                // Word, Grid, Deck, Pdf, Home, then the same again in another order.
-                let order = [0usize, 1, 2, 3, 4, 2, 0, 3, 1, 4, 0, 2];
+                // Every app in order (Word, Grid, Deck, Pdf, Graph, Equations), Home (index 6, past
+                // the tabs), then the same again in another order so each pair of apps meets.
+                let order = [0usize, 1, 2, 3, 4, 5, 6, 5, 2, 4, 0, 6, 3, 5, 1, 4, 6, 2, 5, 0];
                 let i = order[step % order.len()];
                 self.view = ids.get(i).map(|id| View::Tab(*id)).unwrap_or(View::Home);
             }
@@ -2322,6 +2356,10 @@ impl eframe::App for Suite {
             && let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
         {
             if self.ctx_owner != Some(e.kind) {
+                // The app that was in front may have left a style naming font families of its own
+                // (viSHual's "semibold"): until this one installs its own, the shell's own widgets
+                // must only meet the built-in families.
+                ctx.all_styles_mut(|s| *s = egui::Style::default());
                 e.tab.context_changed(ctx);
                 self.ctx_owner = Some(e.kind);
                 self.owner_frames = 0;
@@ -2421,7 +2459,7 @@ impl eframe::App for Suite {
                     let r = ui.selectable_label(self.view == View::Tab(e.id), shown).on_hover_text(e.path.as_deref().unwrap_or("Not saved yet"));
                     // Also draggable (onto the content to tile it) and right-clickable.
                     let r = r.interact(egui::Sense::click_and_drag());
-                    let tileable = e.kind != Kind::Graph;
+                    let tileable = e.kind.tileable();
                     if r.clicked() {
                         select = Some(View::Tab(e.id));
                     }
@@ -2471,7 +2509,9 @@ impl eframe::App for Suite {
                     if ui.button("⟳").on_hover_text("Updates: rebuild against the newest app commits").clicked() {
                         self.updater.open = !self.updater.open;
                     }
-                    if let View::Tab(id) = self.view {
+                    if let View::Tab(id) = self.view
+                        && self.entries.iter().find(|e| e.id == id).is_some_and(|e| e.kind.has_assistant())
+                    {
                         let open = self.entries.iter().find(|e| e.id == id).is_some_and(|e| e.chat.open);
                         if ui.selectable_label(open, "✨ Assistant").clicked() {
                             toggle_chat = Some(id);
@@ -2479,7 +2519,7 @@ impl eframe::App for Suite {
                     }
                     let tiled = self.tiles.len() >= 2;
                     let hint = if tiled { "Back to one document at a time" } else { "Show open documents side by side" };
-                    let can = tiled || self.entries.iter().filter(|e| e.kind != Kind::Graph).count() >= 2;
+                    let can = tiled || self.entries.iter().filter(|e| e.kind.tileable()).count() >= 2;
                     if ui.add_enabled_ui(can, |ui| ui.selectable_label(tiled, "▥ Tile").on_hover_text(hint).clicked()).inner {
                         toggle_tile = true;
                     }
