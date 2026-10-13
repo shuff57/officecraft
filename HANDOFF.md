@@ -43,10 +43,10 @@ Run: `~/officecraft/target/release/officecraft [files...]`. Installed copy: `~/.
 
 ## Warnings
 1. **The Graph tab is hooked up again** (`Kind::Graph`, `ai::App::Graph`): viSHual is embedded like the
-   other apps through path deps on `../viSHual/crates/ui-egui` (`vishual-ui-egui`) and `../viSHual/crates/mcp`
-   (`vishual-mcp`), so building needs a sibling viSHual checkout on its `egui-port` branch (not pushed yet).
-   `graph_services()` in `main.rs` supplies file dialogs and the gallery path. The `unhook-graph` branch
-   is the build without it.
+   other apps through git deps on `shuff57/viSHual` (`vishual-ui-egui`, `vishual-mcp`), so a plain clone builds.
+   `graph_services()` in `main.rs` supplies file dialogs and the gallery path. viSHual's local `egui-port`
+   work needs a `[patch]` entry (or `services.open_url`, added there, once it is pushed). The `unhook-graph`
+   branch is the build without the Graph tab.
 2. **Installed binary is stale.** `~/.local/bin/officecraft` predates session restore and the model default.
    Reinstall after the next build: `install -Dm755 target/release/officecraft ~/.local/bin/officecraft`.
    A running window keeps the old binary; closing it loses unsaved work, so ask first.
