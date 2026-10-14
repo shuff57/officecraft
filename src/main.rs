@@ -1630,6 +1630,46 @@ impl Suite {
         }
     }
 
+    /// Presentations a document's assistant asked for: each opens in a new Slides tab and is
+    /// built there, while the document (and its chat) stays in front.
+    fn open_requested_decks(&mut self, ctx: &egui::Context) {
+        let Some((src, decks)) = self
+            .entries
+            .iter_mut()
+            .find_map(|e| {
+                let d = e.chat.take_decks();
+                (!d.is_empty()).then_some((e.id, d))
+            })
+        else {
+            return;
+        };
+        for args in decks {
+            let keep = self.view;
+            let id = self.new_tab(Kind::Deck);
+            self.view = keep;
+            let title = args.get("title").and_then(serde_json::Value::as_str).unwrap_or("").trim().to_string();
+            let built = match self.entry_mut(id) {
+                Some(e) => {
+                    let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+                    let r = ai::build_slides(&mut host, &args);
+                    if r.is_ok() && !title.is_empty() {
+                        e.name = title.clone();
+                    }
+                    r
+                }
+                None => Err("tab missing".to_string()),
+            };
+            let note = match built {
+                Ok(v) => format!("Opened a new Slides tab with {} slides.", v.get("slides_added").and_then(serde_json::Value::as_u64).unwrap_or(0)),
+                Err(e) => format!("The presentation could not be built: {e}"),
+            };
+            if let Some(e) = self.entry_mut(src) {
+                e.chat.note(note);
+            }
+        }
+        ctx.request_repaint();
+    }
+
     fn drive_ai_selftest(&mut self, ctx: &egui::Context, prompt: String, started: Option<std::time::Instant>) {
         ctx.request_repaint();
         let Some(t0) = started else {
@@ -1639,7 +1679,21 @@ impl Suite {
                 Ok("slides") => Kind::Deck,
                 _ => Kind::Word,
             };
-            let id = self.new_tab(kind);
+            // `OFFICECRAFT_SELFTEST_AI_FILE=<path>` opens that file instead of a blank tab.
+            let kind = match std::env::var("OFFICECRAFT_SELFTEST_AI_FILE") {
+                Ok(path) => {
+                    self.open_file(ctx, &path);
+                    match self.entries.first() {
+                        Some(e) => e.kind,
+                        None => {
+                            eprintln!("ai-selftest: could not open {path}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Err(_) => kind,
+            };
+            let id = if self.entries.is_empty() { self.new_tab(kind) } else { self.entries[0].id };
             let cfg = self.ai_cfg.clone();
             if let Some(e) = self.entry_mut(id) {
                 e.chat.open = true;
@@ -1651,7 +1705,7 @@ impl Suite {
         };
         let timed_out = t0.elapsed().as_secs() > 240;
         let ctx2 = ctx.clone();
-        let Some(e) = self.entries.last_mut() else { return };
+        let Some(e) = self.entries.first_mut() else { return };
         if e.chat.busy() && !timed_out {
             return;
         }
@@ -1665,6 +1719,12 @@ impl Suite {
             eprintln!("---- document ----\n{}", text.chars().take(1500).collect::<String>());
         }
         let bad = timed_out || e.chat.has_error();
+        for d in self.entries.iter_mut().skip(1) {
+            let mut host = TabHost { tab: &mut d.tab, client: &mut d.pdf_client, ctx: &ctx2 };
+            if let ai::CallResult::Done(r) = ai::Host::call(&mut host, "document.inspect", serde_json::json!({"text": true})) {
+                eprintln!("---- tab '{}' ----\n{}", d.name, r.map(|v| v.to_string()).unwrap_or_else(|e| e).chars().take(1500).collect::<String>());
+            }
+        }
         eprintln!("ai-selftest: {} in {:.1}s", if bad { "FAILED" } else { "answered" }, t0.elapsed().as_secs_f32());
         std::process::exit(if bad { 1 } else { 0 });
     }
@@ -2390,6 +2450,7 @@ impl eframe::App for Suite {
             let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
             e.chat.poll(&mut host, app, &self.ai_cfg, ctx);
         }
+        self.open_requested_decks(ctx);
         if let Some((prompt, started)) = self.ai_selftest.clone() {
             self.drive_ai_selftest(ctx, prompt, started);
         }

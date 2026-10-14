@@ -60,7 +60,7 @@ impl Provider {
     fn default_model(self) -> &'static str {
         match self {
             Provider::Local => DEFAULT_MODEL,
-            Provider::Cloud => "gpt-oss:120b",
+            Provider::Cloud => "gemma4:31b",
             Provider::OpenRouter => "openai/gpt-oss-120b",
         }
     }
@@ -116,7 +116,10 @@ impl Config {
         let model = &self.models[p.index()];
         self.model = env("OFFICECRAFT_AI_MODEL").unwrap_or_else(|| if model.is_empty() { p.default_model().to_string() } else { model.clone() });
         let key = &self.keys[p.index()];
-        self.key = env("OFFICECRAFT_AI_KEY").or_else(|| (!key.is_empty()).then(|| key.clone()));
+        self.key = env("OFFICECRAFT_AI_KEY")
+            .or_else(|| (!key.is_empty()).then(|| key.clone()))
+            // Ollama Cloud: the standard variable its own tools read, so a key set up there just works.
+            .or_else(|| if p == Provider::Cloud { env("OLLAMA_API_KEY") } else { None });
     }
 
     pub fn set_model(&mut self, model: &str) {
@@ -512,6 +515,8 @@ pub struct Chat {
     took: Option<f32>,
     /// The composer should take the keyboard.
     focus_input: bool,
+    /// Presentations the model asked for (`create_presentation`), for the shell to open in a Slides tab.
+    decks: Vec<Value>,
 }
 
 impl Chat {
@@ -530,7 +535,19 @@ impl Chat {
             started: None,
             took: None,
             focus_input: true,
+            decks: Vec::new(),
         }
+    }
+
+    /// Presentations the assistant asked for since the last call: each is a `build_slides` argument
+    /// object (`title`, `slides`).
+    pub fn take_decks(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.decks)
+    }
+
+    /// Adds a plain line to the conversation (the shell reports what it did with a request).
+    pub fn note(&mut self, text: String) {
+        self.items.push(Item::Note(text));
     }
 
     /// Sends `text` as if it had been typed and submitted.
@@ -781,12 +798,19 @@ impl Chat {
     }
 
     fn ask(&mut self, app: App, cfg: &Config, ctx: &egui::Context) {
-        let mut messages = vec![json!({"role": "system", "content": system_prompt(app)})];
+        let mut sys = system_prompt(app);
+        if web_enabled(cfg) {
+            sys.push_str(" You also have web_search and web_fetch: use them only when the user asks for current or outside facts, always with a real query or URL, and name your sources.");
+        }
+        let mut messages = vec![json!({"role": "system", "content": sys})];
         messages.extend(self.history.iter().cloned());
         let (tx, rx) = channel();
         self.reply = Some(rx);
         self.streaming.clear();
-        let tool_list = tools(app);
+        let mut tool_list = tools(app);
+        if web_enabled(cfg) && let Value::Array(a) = &mut tool_list {
+            a.extend(web_tools());
+        }
         let cfg = cfg.clone();
         let ctx = ctx.clone();
         let epoch = self.epoch;
@@ -886,6 +910,23 @@ impl Chat {
         }
         self.items.push(Item::Steps(steps));
         for (id, name, args) in parsed {
+            if app == App::Docs && name == "create_presentation" {
+                // Needs a new tab, which only the shell can open: queue it and answer the model.
+                let r = match args.get("slides").and_then(Value::as_array) {
+                    Some(s) if !s.is_empty() => {
+                        self.decks.push(args.clone());
+                        Ok(json!({"status": "opened a new Slides tab with the deck", "slides": s.len()}))
+                    }
+                    _ => Err("create_presentation needs a non-empty `slides` list".to_string()),
+                };
+                self.finish_call(&id, &name, r);
+                continue;
+            }
+            if (name == "web_search" || name == "web_fetch") && web_enabled(cfg) {
+                let rx = web_call(cfg, &name, &args, ctx);
+                self.pending.push(PendingCall { id, name, rx });
+                continue;
+            }
             match run_tool(host, app, &name, &args) {
                 CallResult::Done(r) => self.finish_call(&id, &name, r),
                 CallResult::Pending(rx) => self.pending.push(PendingCall { id, name, rx }),
@@ -897,7 +938,14 @@ impl Chat {
     fn finish_call(&mut self, id: &str, name: &str, r: Result<Value, String>) {
         let (ok, content) = match r {
             Ok(v) => (true, truncate(&v)),
-            Err(e) => (false, json!({"error": e}).to_string()),
+            Err(e) => {
+                let hint = if e.contains("unknown command") {
+                    " Command ids look like `format.bold` or `text.insert`, not a description: call list_commands with a filter, or use a dedicated tool (replace_text, insert_blocks, build_slides)."
+                } else {
+                    ""
+                };
+                (false, json!({"error": format!("{e}.{hint}")}).to_string())
+            }
         };
         // The step in the activity card turns done (or failed, with the reason).
         for it in self.items.iter_mut().rev() {
@@ -1070,6 +1118,7 @@ fn empty_state(ui: &mut egui::Ui, app: App, accent: egui::Color32, ink: egui::Co
     let chips: &[(&str, bool)] = match app {
         App::Docs => &[
             ("Summarize this document", true),
+            ("Turn this into a presentation", true),
             ("Fix spelling and grammar", true),
             ("Make it more concise", true),
             ("Draft a one-page report on…", false),
@@ -1198,7 +1247,7 @@ fn inline(ui: &mut egui::Ui, text: &str, ink: egui::Color32, _accent: egui::Colo
 /// The tools that only look.
 fn is_read_only(name: &str, args: &Value) -> bool {
     match name {
-        "inspect_document" | "inspect_slide" | "inspect_workbook" | "get_text" | "read_range" | "get_cell" | "list_commands" | "list_functions"
+        "web_search" | "web_fetch" | "inspect_document" | "inspect_slide" | "inspect_workbook" | "get_text" | "read_range" | "get_cell" | "list_commands" | "list_functions"
         | "evaluate_formula" => true,
         "run_command" | "execute" | "execute_command" => {
             let c = args.get("command").and_then(Value::as_str).unwrap_or("");
@@ -1240,6 +1289,9 @@ fn describe(name: &str, args: &Value) -> String {
         "read_range" => format!("Read {}", s("range")),
         "get_cell" => format!("Read {}", s("cell")),
         "list_commands" | "list_functions" => "Looked up commands".into(),
+        "web_search" => format!("Searched the web for “{}”", s("query")),
+        "web_fetch" => format!("Read {}", s("url")),
+        "create_presentation" => format!("Made a {} deck", plural(count(args, "slides"), "slide", "slides")),
         "insert_blocks" => format!("Wrote {}", plural(count(args, "blocks"), "paragraph", "paragraphs")),
         "replace_text" => format!("Replaced “{}” with “{}”", s("find"), s("replace")),
         "type_text" => "Typed text".into(),
@@ -1281,7 +1333,9 @@ fn system_prompt(app: App) -> String {
             " Read the text with get_text or inspect_document. To add or draft content call insert_blocks \
               once with every paragraph and its style (Heading 1, Normal, Bullet...); do not type it piece \
               by piece. To change text in place use replace_text, or select_text then a command such as \
-              format.bold or para.style with execute. Use batch to run several commands in one go."
+              format.bold or para.style with execute. Use batch to run several commands in one go. \
+              To turn the document into a presentation, read all of it first, then call create_presentation \
+              once; it opens the deck in a new tab and leaves this document alone."
         }
         App::Slides => {
             " Look with inspect_document and inspect_slide. To draft or extend a deck call build_slides once \
@@ -1363,6 +1417,20 @@ fn mcp_definitions(app: App) -> Option<Vec<Value>> {
                 "at": {"type": "string", "enum": ["end", "start", "cursor"], "description": "where to write (default end)"}},
                 "required": ["blocks"]}}}));
         out.push(json!({"type": "function", "function": {
+            "name": "create_presentation",
+            "description": "Make a new slide deck from what you have read, in its own new Slides tab (this \
+                            document stays open and unchanged). Call it once, after reading the document, \
+                            with every slide: a title slide first, then one slide per main point with short \
+                            bullets (about 3 to 5, under 12 words each).",
+            "parameters": {"type": "object", "properties": {
+                "title": {"type": "string", "description": "the deck's title"},
+                "slides": {"type": "array", "description": "in order", "items": {"type": "object", "properties": {
+                    "title": {"type": "string"},
+                    "bullets": {"type": "array", "items": {"type": "string"}},
+                    "layout": {"type": "string", "enum": ["title", "titleAndContent", "sectionHeader", "twoContent", "titleOnly", "blank"]}},
+                    "required": ["title"]}}},
+                "required": ["slides"]}}}));
+        out.push(json!({"type": "function", "function": {
             "name": "replace_text",
             "description": "Replace every occurrence of some text in the document.",
             "parameters": {"type": "object", "properties": {
@@ -1387,7 +1455,7 @@ fn mcp_definitions(app: App) -> Option<Vec<Value>> {
 }
 
 /// `build_slides`: slides go in through the deck's own `slide.new`, bullets as the body lines.
-fn build_slides(host: &mut dyn Host, args: &Value) -> Result<Value, String> {
+pub fn build_slides(host: &mut dyn Host, args: &Value) -> Result<Value, String> {
     let slides = args.get("slides").and_then(Value::as_array).ok_or("build_slides needs `slides`")?;
     if slides.is_empty() {
         return Err("`slides` is empty".into());
@@ -1663,6 +1731,51 @@ fn run_tool(host: &mut dyn Host, app: App, name: &str, args: &Value) -> CallResu
     }
 }
 
+/// Web search and page reading go through Ollama's hosted API, so they need the Ollama Cloud
+/// provider and its key.
+fn web_enabled(cfg: &Config) -> bool {
+    cfg.key.is_some() && cfg.base_url.starts_with("https://ollama.com")
+}
+
+fn web_tools() -> Vec<Value> {
+    vec![
+        json!({"type": "function", "function": {
+            "name": "web_search",
+            "description": "Search the web. Returns titles, URLs and text excerpts. Use for current or outside facts.",
+            "parameters": {"type": "object", "properties": {
+                "query": {"type": "string"},
+                "max_results": {"type": "integer", "description": "1 to 10 (default 5)"}},
+                "required": ["query"]}}}),
+        json!({"type": "function", "function": {
+            "name": "web_fetch",
+            "description": "Read the text of one web page by URL (for example one from web_search).",
+            "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}}),
+    ]
+}
+
+/// Runs a web tool off the UI thread; the answer arrives on the returned channel.
+fn web_call(cfg: &Config, name: &str, args: &Value, ctx: &egui::Context) -> Receiver<Result<Value, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let key = cfg.key.clone();
+    let ctx = ctx.clone();
+    let (url, body) = if name == "web_search" {
+        let n = args.get("max_results").and_then(Value::as_u64).unwrap_or(5).clamp(1, 10);
+        ("https://ollama.com/api/web_search", json!({"query": args.get("query").and_then(Value::as_str).unwrap_or(""), "max_results": n}))
+    } else {
+        ("https://ollama.com/api/web_fetch", json!({"url": args.get("url").and_then(Value::as_str).unwrap_or("")}))
+    };
+    spawn_task(async move {
+        let r = match post_json(url, key.as_deref(), &body, 45).await {
+            Ok((200..=299, text)) => serde_json::from_str::<Value>(&text).map_err(|e| format!("unreadable reply: {e}")),
+            Ok((status, text)) => Err(format!("web request failed ({status}): {}", text.chars().take(200).collect::<String>())),
+            Err(e) => Err(e),
+        };
+        let _ = tx.send(r);
+        ctx.request_repaint();
+    });
+    rx
+}
+
 fn filter_commands(v: Value, filter: &str) -> Value {
     let Value::Array(items) = v else { return v };
     let total = items.len();
@@ -1872,17 +1985,28 @@ async fn stream_inner(cfg: &Config, messages: Vec<Value>, tools: Value, tx: &std
     use std::io::{BufRead, BufReader};
     let url = format!("{}/chat/completions", cfg.base_url);
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(300))).http_status_as_error(false).build().into();
-    let mut req = agent.post(&url);
-    if let Some(k) = &cfg.key {
-        req = req.header("Authorization", &format!("Bearer {k}"));
-    }
-    let body = json!({"model": cfg.model, "messages": messages, "tools": tools, "stream": true});
-    let mut resp = req.header("Content-Type", "application/json").send(body.to_string()).map_err(|e| format!("Can't reach {url}: {e}"))?;
-    let status = resp.status().as_u16();
-    if !(200..300).contains(&status) {
+    let body = json!({"model": cfg.model, "messages": messages, "tools": tools, "stream": true}).to_string();
+    // A hosted endpoint now and then answers 429 or 5xx for no reason of the request's: nothing has
+    // streamed yet, so asking again is safe.
+    let mut attempt = 0;
+    let mut resp = loop {
+        let mut req = agent.post(&url);
+        if let Some(k) = &cfg.key {
+            req = req.header("Authorization", &format!("Bearer {k}"));
+        }
+        let mut resp = req.header("Content-Type", "application/json").send(body.clone()).map_err(|e| format!("Can't reach {url}: {e}"))?;
+        let status = resp.status().as_u16();
+        if (200..300).contains(&status) {
+            break resp;
+        }
+        if (status == 429 || status >= 500) && attempt < 3 {
+            attempt += 1;
+            std::thread::sleep(Duration::from_millis(1500 * attempt as u64));
+            continue;
+        }
         let text = resp.body_mut().read_to_string().unwrap_or_default();
         return Err(error_message(&url, status, &text));
-    }
+    };
     let mut acc = StreamAcc::default();
     let reader = BufReader::new(resp.body_mut().as_reader());
     for line in reader.lines() {
