@@ -85,3 +85,8 @@ pub fn build_label() -> String {
     let target = if cfg!(target_arch = "wasm32") { "web" } else { "desktop" };
     format!("{target} {}", env!("OFFICECRAFT_BUILD"))
 }
+
+/// The commit of each app this build contains (from Cargo.lock); compare it between builds.
+pub fn app_versions() -> &'static str {
+    env!("OFFICECRAFT_APPS")
+}

@@ -178,6 +178,7 @@ impl Settings {
         let mut open = true;
         egui::Window::new("Assistant settings").open(&mut open).collapsible(false).resizable(false).default_width(500.0).show(ctx, |ui| {
             ui.weak(format!("This build: {}", crate::platform::build_label()));
+            ui.weak(format!("Apps: {}", crate::platform::app_versions()));
             let d = &mut self.draft;
             ui.label(egui::RichText::new("Provider").strong());
             ui.horizontal(|ui| {

@@ -1747,7 +1747,7 @@ impl Suite {
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
                     ui.label(egui::RichText::new(platform::build_label()).size(10.0).color(MUTED))
-                        .on_hover_text("The commit this build came from. The desktop and web builds match when these agree.");
+                        .on_hover_text(format!("The commit this build came from. The desktop and web builds match when these agree.\n\nApps: {}", platform::app_versions()));
                 });
                 ui.add_space(8.0);
                 if side_row(ui, self.folder_sel.is_none(), false, "Recent", Some(self.recent.len()), false).0.clicked() {

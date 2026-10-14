@@ -20,10 +20,12 @@ fi
 cargo_args=()
 if [ -n "${OFFICECRAFT_CARGO_CONFIG:-}" ]; then
   cargo_args=(--config "$OFFICECRAFT_CARGO_CONFIG")
+  # Build the committed Cargo.lock as it is: it pins each app's commit, and the browser build uses
+  # the same pins. (Re-resolving here floated every app to its branch tip, so a desktop install
+  # could differ from the web page.) Bump the pins with a lock commit, not on the user's machine.
   [ "${1:-}" = "--local" ] || {
     cp Cargo.lock "${TMPDIR:-/tmp}/officecraft-Cargo.lock.bak"
     trap 'cp "${TMPDIR:-/tmp}/officecraft-Cargo.lock.bak" Cargo.lock' EXIT
-    cargo update -q "${cargo_args[@]}"
   }
 fi
 
