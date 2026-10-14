@@ -517,6 +517,8 @@ pub struct Chat {
     focus_input: bool,
     /// Presentations the model asked for (`create_presentation`), for the shell to open in a Slides tab.
     decks: Vec<Value>,
+    /// Graphs the model asked for (`create_graph`): `title`, `expressions`, `mode`.
+    graphs: Vec<Value>,
 }
 
 impl Chat {
@@ -536,6 +538,7 @@ impl Chat {
             took: None,
             focus_input: true,
             decks: Vec::new(),
+            graphs: Vec::new(),
         }
     }
 
@@ -543,6 +546,11 @@ impl Chat {
     /// object (`title`, `slides`).
     pub fn take_decks(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.decks)
+    }
+
+    /// Graphs the assistant asked for since the last call.
+    pub fn take_graphs(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.graphs)
     }
 
     /// Adds a plain line to the conversation (the shell reports what it did with a request).
@@ -910,6 +918,18 @@ impl Chat {
         }
         self.items.push(Item::Steps(steps));
         for (id, name, args) in parsed {
+            if app == App::Docs && name == "create_graph" {
+                // Drawn with viSHual and placed as a picture by the shell, which owns the tabs.
+                let ok = args.get("expressions").and_then(Value::as_array).is_some_and(|a| a.iter().any(|e| e.as_str().is_some_and(|t| !t.trim().is_empty())));
+                let r = if ok {
+                    self.graphs.push(args.clone());
+                    Ok(json!({"status": "drawn with viSHual and inserted as a picture at the cursor; double-click it to edit"}))
+                } else {
+                    Err("create_graph needs a non-empty `expressions` list".to_string())
+                };
+                self.finish_call(&id, &name, r);
+                continue;
+            }
             if app == App::Docs && name == "create_presentation" {
                 // Needs a new tab, which only the shell can open: queue it and answer the model.
                 let r = match args.get("slides").and_then(Value::as_array) {
@@ -1291,6 +1311,7 @@ fn describe(name: &str, args: &Value) -> String {
         "list_commands" | "list_functions" => "Looked up commands".into(),
         "web_search" => format!("Searched the web for “{}”", s("query")),
         "web_fetch" => format!("Read {}", s("url")),
+        "create_graph" => format!("Drew a graph of {}", plural(count(args, "expressions"), "item", "items")),
         "create_presentation" => format!("Made a {} deck", plural(count(args, "slides"), "slide", "slides")),
         "insert_blocks" => format!("Wrote {}", plural(count(args, "blocks"), "paragraph", "paragraphs")),
         "replace_text" => format!("Replaced “{}” with “{}”", s("find"), s("replace")),
@@ -1335,7 +1356,8 @@ fn system_prompt(app: App) -> String {
               by piece. To change text in place use replace_text, or select_text then a command such as \
               format.bold or para.style with execute. Use batch to run several commands in one go. \
               To turn the document into a presentation, read all of it first, then call create_presentation \
-              once; it opens the deck in a new tab and leaves this document alone."
+              once; it opens the deck in a new tab and leaves this document alone. To add a graph or plot \
+              call create_graph (it is drawn with viSHual and placed as a picture at the cursor)."
         }
         App::Slides => {
             " Look with inspect_document and inspect_slide. To draft or extend a deck call build_slides once \
@@ -1430,6 +1452,17 @@ fn mcp_definitions(app: App) -> Option<Vec<Value>> {
                     "layout": {"type": "string", "enum": ["title", "titleAndContent", "sectionHeader", "twoContent", "titleOnly", "blank"]}},
                     "required": ["title"]}}},
                 "required": ["slides"]}}}));
+        out.push(json!({"type": "function", "function": {
+            "name": "create_graph",
+            "description": "Draw a graph with viSHual and insert it into the document as a picture at the \
+                            cursor. Give each item as text: y=x^2, y=\\sin(x), a point (1,2), r=1+cos(theta), \
+                            x^2+y^2<4. A free letter such as a becomes a slider. Double-clicking the picture \
+                            later opens it for editing.",
+            "parameters": {"type": "object", "properties": {
+                "title": {"type": "string", "description": "short name, used as the picture's description"},
+                "expressions": {"type": "array", "items": {"type": "string"}},
+                "mode": {"type": "string", "enum": ["2d", "3d"], "description": "default 2d"}},
+                "required": ["expressions"]}}}));
         out.push(json!({"type": "function", "function": {
             "name": "replace_text",
             "description": "Replace every occurrence of some text in the document.",

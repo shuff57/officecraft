@@ -14,6 +14,7 @@ type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
 mod ai;
 mod equation;
+mod graphpic;
 mod platform;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
@@ -535,6 +536,8 @@ struct Entry {
     path: Option<String>,
     tab: Tab,
     chat: ai::Chat,
+    /// A Graph tab opened from a graph picture in a document: the document's tab id.
+    graph_for: Option<u64>,
     /// PDF is driven over its control channel; the client is made the first time it is needed.
     pdf_client: Option<pdfcraft_ui_egui::control::ControlClient>,
 }
@@ -1088,7 +1091,7 @@ impl Suite {
         let id = self.next_id;
         self.next_id += 1;
         let n = self.entries.iter().filter(|e| e.kind == kind).count() + 1;
-        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), pdf_client: None });
+        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), graph_for: None, pdf_client: None });
         self.view = View::Tab(id);
         if !kind.tileable() {
             // The Graph and Equations tabs bring their own fonts and layout; they are never tiled.
@@ -1630,6 +1633,157 @@ impl Suite {
         }
     }
 
+    /// Graphs a document's assistant asked for: each is drawn with viSHual (no tab, no window) and
+    /// inserted as a picture at the caret, with the graph stored inside the PNG for editing later.
+    fn make_requested_graphs(&mut self, ctx: &egui::Context) {
+        let Some((src, graphs)) = self.entries.iter_mut().find_map(|e| {
+            let g = e.chat.take_graphs();
+            (!g.is_empty()).then_some((e.id, g))
+        }) else {
+            return;
+        };
+        for args in graphs {
+            let note = match render_graph(&args) {
+                Ok((png, json)) => {
+                    let alt = args.get("title").and_then(serde_json::Value::as_str).filter(|t| !t.trim().is_empty()).map(|t| format!("Graph: {t}")).unwrap_or_else(|| "Graph".into());
+                    let data = graphpic::base64_encode(&graphpic::embed(&png, &json).unwrap_or(png));
+                    match self.entry_mut(src) {
+                        Some(e) => {
+                            let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+                            let r = ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "insert.picture", "params": {"data": data, "width": 430, "alt": alt}}));
+                            match r {
+                                ai::CallResult::Done(Ok(_)) => "Inserted a graph. Double-click it to edit it in viSHual.".to_string(),
+                                ai::CallResult::Done(Err(e)) => format!("The graph could not be inserted: {e}"),
+                                ai::CallResult::Pending(_) => "The graph could not be inserted here.".to_string(),
+                            }
+                        }
+                        None => continue,
+                    }
+                }
+                Err(e) => format!("The graph could not be drawn: {e}"),
+            };
+            if let Some(e) = self.entry_mut(src) {
+                e.chat.note(note);
+            }
+        }
+        ctx.request_repaint();
+    }
+
+    /// A picture double-clicked in a document: if it carries a graph, it opens in a Graph tab
+    /// linked back to the document (see the bar at the top of that tab).
+    fn open_double_clicked_graphs(&mut self, ctx: &egui::Context) {
+        let mut found = None;
+        for e in self.entries.iter_mut() {
+            if let Tab::Word(a) = &mut e.tab
+                && let Some(bytes) = a.take_picture_edit()
+                && let Some(json) = graphpic::extract(&bytes)
+            {
+                found = Some((e.id, e.name.clone(), json));
+                break;
+            }
+        }
+        let Some((doc_id, doc_name, json)) = found else { return };
+        // The same picture's editor is already open: show it.
+        if let Some(open) = self.entries.iter().find(|e| e.graph_for == Some(doc_id)) {
+            self.view = View::Tab(open.id);
+            return;
+        }
+        let id = self.push_tab(Kind::Graph, Tab::create(Kind::Graph));
+        let result = match self.entry_mut(id) {
+            Some(e) => {
+                e.graph_for = Some(doc_id);
+                e.name = format!("Graph ({doc_name})");
+                match &mut e.tab {
+                    Tab::Graph(g) => g.load_json(&json),
+                    _ => Err("not a graph tab".into()),
+                }
+            }
+            None => Err("tab missing".into()),
+        };
+        if let Err(e) = result {
+            self.entries.retain(|x| x.id != id);
+            self.view = View::Tab(doc_id);
+            self.notice = Some(format!("Could not open the graph: {e}"));
+        }
+        ctx.request_repaint();
+    }
+
+    /// The linked Graph tab's "Update picture": redraws the graph, stores it in the PNG and puts
+    /// it in place of the picture in the document, then returns to the document.
+    fn update_graph_picture(&mut self, graph_id: u64, ctx: &egui::Context) {
+        let Some(doc_id) = self.entries.iter().find(|e| e.id == graph_id).and_then(|e| e.graph_for) else { return };
+        let rendered = match self.entry_mut(graph_id).map(|e| &mut e.tab) {
+            Some(Tab::Graph(g)) => g.render_png(GRAPH_PX).map(|png| (png, g.doc_json())),
+            _ => Err("not a graph tab".into()),
+        };
+        let result = rendered.and_then(|(png, json)| {
+            let data = graphpic::base64_encode(&graphpic::embed(&png, &json).unwrap_or(png));
+            let e = self.entry_mut(doc_id).ok_or_else(|| "the document was closed".to_string())?;
+            let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+            match ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "picture.replaceImage", "params": {"data": data}})) {
+                ai::CallResult::Done(r) => r.map(|_| ()).map_err(|e| format!("{e} (select the picture in the document again)")),
+                ai::CallResult::Pending(_) => Err("the document did not answer".into()),
+            }
+        });
+        match result {
+            Ok(()) => {
+                self.close(graph_id);
+                self.view = View::Tab(doc_id);
+                self.notice = None;
+            }
+            Err(e) => self.notice = Some(format!("Could not update the picture: {e}")),
+        }
+        ctx.request_repaint();
+    }
+
+    /// `OFFICECRAFT_SELFTEST_GRAPH=<dir>`: draw a graph into a new document, double-click the
+    /// picture, edit the graph in its tab, update the picture, and write both PNGs to `dir`.
+    fn graph_selftest(&mut self, ctx: &egui::Context, dir: &str) {
+        let fail = |m: String| -> ! {
+            eprintln!("graph-selftest: FAILED: {m}");
+            std::process::exit(1)
+        };
+        let picture = |suite: &mut Suite, id: u64| -> Vec<u8> {
+            match suite.entry_mut(id).map(|e| &mut e.tab) {
+                Some(Tab::Word(a)) => wordcraft_engine::cmd::objects::selected_picture_bytes(&a.session).map(|b| b.to_vec()).unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        };
+        let doc = self.new_tab(Kind::Word);
+        let (png, json) = render_graph(&serde_json::json!({"expressions": ["y=x^2", "y=2x+1"]})).unwrap_or_else(|e| fail(format!("draw: {e}")));
+        let first = graphpic::embed(&png, &json).unwrap_or_else(|| fail("embed".into()));
+        let _ = std::fs::write(format!("{dir}/first.png"), &first);
+        let data = graphpic::base64_encode(&first);
+        {
+            let e = self.entry_mut(doc).unwrap();
+            let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+            if let ai::CallResult::Done(Err(er)) = ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "insert.picture", "params": {"data": data, "width": 430, "alt": "Graph"}})) {
+                fail(format!("insert: {er}"));
+            }
+            if let Tab::Word(a) = &mut e.tab {
+                a.canvas.picture_edit = true;
+            }
+        }
+        self.open_double_clicked_graphs(ctx);
+        let Some(g) = self.entries.iter().find(|e| e.graph_for == Some(doc)).map(|e| e.id) else { fail("double-click opened no graph tab".into()) };
+        if let Some(Tab::Graph(a)) = self.entry_mut(g).map(|e| &mut e.tab) {
+            let r = a.control("engine.execute", serde_json::json!({"command": "addItem", "params": {"id": "a9", "kind": "equation", "latex": "y=-x+5"}}));
+            if let Err(er) = r {
+                fail(format!("edit: {er}"));
+            }
+        }
+        self.update_graph_picture(g, ctx);
+        if let Some(n) = &self.notice {
+            fail(n.clone());
+        }
+        let second = picture(self, doc);
+        let _ = std::fs::write(format!("{dir}/second.png"), &second);
+        let same_tab_back = self.view == View::Tab(doc) && self.entries.iter().all(|e| e.graph_for.is_none());
+        let items = |p: &[u8]| graphpic::extract(p).map(|j| j.matches("\"latex\"").count()).unwrap_or(0);
+        eprintln!("graph-selftest: first {} bytes ({} items), second {} bytes ({} items), back in document: {same_tab_back}", first.len(), items(&first), second.len(), items(&second));
+        std::process::exit(if second != first && items(&second) == items(&first) + 1 && same_tab_back { 0 } else { 1 });
+    }
+
     /// Presentations a document's assistant asked for: each opens in a new Slides tab and is
     /// built there, while the document (and its chat) stays in front.
     fn open_requested_decks(&mut self, ctx: &egui::Context) {
@@ -2104,6 +2258,27 @@ impl Suite {
     }
 }
 
+/// Size, in points, the graph pictures are drawn at (the stage's shape).
+const GRAPH_PX: (f32, f32) = (720.0, 480.0);
+
+/// Draws the graph an assistant described: the PNG and the viSHual document it came from.
+fn render_graph(args: &serde_json::Value) -> Result<(Vec<u8>, String), String> {
+    let list: Vec<&str> = args.get("expressions").and_then(serde_json::Value::as_array).map(|a| a.iter().filter_map(serde_json::Value::as_str).map(str::trim).filter(|t| !t.is_empty()).collect()).unwrap_or_default();
+    if list.is_empty() {
+        return Err("no expressions".into());
+    }
+    let mut app = vishual_ui_egui::VishualApp::new(graph_services());
+    let _ = app.control("engine.execute", serde_json::json!({"command": "newGraph", "params": {}}));
+    for (i, e) in list.iter().enumerate() {
+        app.control("engine.execute", serde_json::json!({"command": "addItem", "params": {"id": format!("a{}", i + 1), "kind": "equation", "latex": e}})).map_err(|er| format!("{e}: {er}"))?;
+    }
+    if args.get("mode").and_then(serde_json::Value::as_str) == Some("3d") {
+        let _ = app.control("engine.execute", serde_json::json!({"command": "setMode", "params": {"mode": "3d"}}));
+    }
+    let png = app.render_png(GRAPH_PX)?;
+    Ok((png, app.doc_json()))
+}
+
 /// The open tab as the assistant's tools see it: each app's own control surface.
 struct TabHost<'a> {
     tab: &'a mut Tab,
@@ -2451,6 +2626,11 @@ impl eframe::App for Suite {
             e.chat.poll(&mut host, app, &self.ai_cfg, ctx);
         }
         self.open_requested_decks(ctx);
+        self.make_requested_graphs(ctx);
+        self.open_double_clicked_graphs(ctx);
+        if let Ok(dir) = std::env::var("OFFICECRAFT_SELFTEST_GRAPH") {
+            self.graph_selftest(ctx, &dir);
+        }
         if let Some((prompt, started)) = self.ai_selftest.clone() {
             self.drive_ai_selftest(ctx, prompt, started);
         }
@@ -2745,6 +2925,34 @@ impl eframe::App for Suite {
                     }
                 }
                 None => {}
+            }
+        }
+        // A Graph tab opened from a picture in a document: put the edit back, or drop it.
+        if let View::Tab(id) = self.view
+            && let Some((doc_id, doc_name)) = self
+                .entries
+                .iter()
+                .find(|e| e.id == id)
+                .and_then(|e| e.graph_for)
+                .and_then(|d| self.entries.iter().find(|x| x.id == d).map(|x| (d, x.name.clone())))
+        {
+            let (mut update, mut cancel) = (false, false);
+            egui::Panel::top("officecraft_graph_link").show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Editing the graph picture in {doc_name}"));
+                    if ui.button("Update picture").on_hover_text("Replace the picture in the document with this graph").clicked() {
+                        update = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+            if update {
+                self.update_graph_picture(id, ui.ctx());
+            } else if cancel {
+                self.close(id);
+                self.view = View::Tab(doc_id);
             }
         }
         match self.view {

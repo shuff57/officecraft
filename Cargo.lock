@@ -2046,7 +2046,6 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.36.2"
-source = "git+https://github.com/storytold/pdfcraft#7437bde378f43856eada40af25b983812e615e8a"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2281,7 +2280,7 @@ dependencies = [
 [[package]]
 name = "equashion-egui"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "egui",
  "equashion-layout 0.1.0 (git+https://github.com/shuff57/viSHual)",
@@ -2304,7 +2303,7 @@ dependencies = [
 [[package]]
 name = "equashion-font"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
@@ -2326,7 +2325,7 @@ dependencies = [
 [[package]]
 name = "equashion-layout"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "equashion-font 0.1.0 (git+https://github.com/shuff57/viSHual)",
  "equashion-math 0.1.0 (git+https://github.com/shuff57/viSHual)",
@@ -2346,7 +2345,7 @@ dependencies = [
 [[package]]
 name = "equashion-math"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "quick-xml 0.38.4",
  "serde",
@@ -2365,7 +2364,7 @@ dependencies = [
 [[package]]
 name = "equashion-render"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "equashion-layout 0.1.0 (git+https://github.com/shuff57/viSHual)",
  "kurbo 0.13.1",
@@ -3219,7 +3218,6 @@ dependencies = [
 [[package]]
 name = "hayro"
 version = "0.7.1"
-source = "git+https://github.com/storytold/pdfcraft#7437bde378f43856eada40af25b983812e615e8a"
 dependencies = [
  "bytemuck",
  "hayro-interpret",
@@ -3249,7 +3247,6 @@ dependencies = [
 [[package]]
 name = "hayro-interpret"
 version = "0.7.0"
-source = "git+https://github.com/storytold/pdfcraft#7437bde378f43856eada40af25b983812e615e8a"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
@@ -3267,7 +3264,6 @@ dependencies = [
 [[package]]
 name = "hayro-jbig2"
 version = "0.3.0"
-source = "git+https://github.com/storytold/pdfcraft#7437bde378f43856eada40af25b983812e615e8a"
 dependencies = [
  "fearless_simd",
  "hayro-ccitt",
@@ -3291,7 +3287,6 @@ checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
 [[package]]
 name = "hayro-syntax"
 version = "0.7.2"
-source = "git+https://github.com/storytold/pdfcraft#7437bde378f43856eada40af25b983812e615e8a"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -3964,7 +3959,6 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "lopdf"
 version = "0.45.0"
-source = "git+https://github.com/storytold/pdfcraft#7437bde378f43856eada40af25b983812e615e8a"
 dependencies = [
  "aes",
  "bitflags 2.13.2",
@@ -4001,7 +3995,7 @@ dependencies = [
 [[package]]
 name = "math_core"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "base64 0.22.1",
  "miniz_oxide 0.7.4",
@@ -4013,7 +4007,7 @@ dependencies = [
 [[package]]
 name = "math_playground"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -7799,7 +7793,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vishual-mcp"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "serde_json",
 ]
@@ -7807,7 +7801,7 @@ dependencies = [
 [[package]]
 name = "vishual-ui-egui"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "ab_glyph",
  "async-trait",
@@ -7836,7 +7830,7 @@ dependencies = [
 [[package]]
 name = "viz_gen"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -7856,7 +7850,7 @@ dependencies = [
 [[package]]
 name = "viz_logic"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "equashion-math 0.1.0 (git+https://github.com/shuff57/viSHual)",
  "json-patch",
@@ -7870,7 +7864,7 @@ dependencies = [
 [[package]]
 name = "viz_types"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
+source = "git+https://github.com/shuff57/viSHual#bd97a8830ee55723d8ed1a1f568c261134587831"
 dependencies = [
  "math_core",
  "schemars",
@@ -8930,7 +8924,6 @@ dependencies = [
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "git+https://github.com/storytold/pdfcraft#7437bde378f43856eada40af25b983812e615e8a"
 dependencies = [
  "ahash",
  "android-activity 0.6.1",
@@ -9013,12 +9006,12 @@ dependencies = [
 [[package]]
 name = "wordcraft-control-key"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 
 [[package]]
 name = "wordcraft-doc"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "serde",
  "serde_json",
@@ -9030,7 +9023,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-docbin"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "cfb",
  "image",
@@ -9044,7 +9037,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-docx"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -9065,7 +9058,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-engine"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "equashion-math 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=386b16cff9fddb69db2f1759aea384e8887e3970)",
  "image",
@@ -9092,7 +9085,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-fonts"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
@@ -9106,7 +9099,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-formats"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "image",
  "log",
@@ -9119,7 +9112,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-geom"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "serde",
 ]
@@ -9127,7 +9120,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-layout"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "equashion-layout 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=386b16cff9fddb69db2f1759aea384e8887e3970)",
  "equashion-math 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=386b16cff9fddb69db2f1759aea384e8887e3970)",
@@ -9150,7 +9143,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-mcp"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "log",
  "serde_json",
@@ -9163,7 +9156,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-metafile"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "kurbo 0.13.1",
  "thiserror 2.0.21",
@@ -9172,7 +9165,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-pdf"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "image",
  "js-sys",
@@ -9190,7 +9183,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-proof"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "log",
  "miniz_oxide 0.8.9",
@@ -9199,7 +9192,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-render"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "image",
  "log",
@@ -9214,7 +9207,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-ui-egui"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d)",
  "egui",
@@ -9239,7 +9232,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-zotero"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b49231dae374fffbad18f6c3b4f71b2bcfdfe7be"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
 dependencies = [
  "log",
  "serde_json",
@@ -9662,3 +9655,331 @@ dependencies = [
  "syn 3.0.8",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "gridcraft-calc"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-chart"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-core"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-engine"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-formula"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-functions"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-mcp"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-model"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-numfmt"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-pdf"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-ui-egui"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "gridcraft-xlsx"
+version = "0.6.0"
+
+[[patch.unused]]
+name = "pdfcraft-a11y"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-annot"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-audit"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-automation"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-compare"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-content"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-cos"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-create"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-crypt"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-edit"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-engine"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-export"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-filters"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-fonts"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-forms"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-geom"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-js"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-measure"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-model"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-ocr"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-optimize"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-organize"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-platform"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-preflight"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-print"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-redact"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-render"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-sign"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-ui-egui"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-xfa"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "pdfcraft-xfdf"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "deckcraft-anim"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-av1"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-bitstream"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-color"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-engine"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-fonts"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-format"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-geom"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-h264"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-hevc"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-isobmff"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-matroska"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-mcp"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-media"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-model"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-ogg"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-opus"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-pdf"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-pptx"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-render"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-text"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-ui-egui"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "deckcraft-vp9"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-control-key"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-doc"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-docbin"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-docx"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-engine"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-fonts"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-formats"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-geom"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-layout"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-mcp"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-metafile"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-pdf"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-proof"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-render"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-ui-egui"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "wordcraft-zotero"
+version = "0.5.0"
