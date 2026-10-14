@@ -70,6 +70,11 @@ pub fn start() {
         if let Err(e) = guard_unload() {
             log::error!("no unsaved-changes guard: {e}");
         }
+        // The Graph tab (viSHual) draws through its own WebGL2 renderer, which has to exist before
+        // the first frame: without this the tab says "the graph renderer is unavailable".
+        if let Err(e) = vishual_ui_egui::init_web_gpu().await {
+            log::error!("graph renderer: {e}");
+        }
         let mut options = eframe::WebOptions::default();
         if query().contains("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
