@@ -2404,7 +2404,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3646,7 +3646,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6255,7 +6255,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7198,7 +7198,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8521,7 +8521,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -9006,12 +9006,12 @@ dependencies = [
 [[package]]
 name = "wordcraft-control-key"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 
 [[package]]
 name = "wordcraft-doc"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "serde",
  "serde_json",
@@ -9023,7 +9023,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-docbin"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "cfb",
  "image",
@@ -9037,7 +9037,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-docx"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -9058,7 +9058,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-engine"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "equashion-math 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=386b16cff9fddb69db2f1759aea384e8887e3970)",
  "image",
@@ -9085,7 +9085,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-fonts"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
@@ -9099,7 +9099,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-formats"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "image",
  "log",
@@ -9112,7 +9112,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-geom"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "serde",
 ]
@@ -9120,7 +9120,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-layout"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "equashion-layout 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=386b16cff9fddb69db2f1759aea384e8887e3970)",
  "equashion-math 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=386b16cff9fddb69db2f1759aea384e8887e3970)",
@@ -9143,7 +9143,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-mcp"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "log",
  "serde_json",
@@ -9156,7 +9156,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-metafile"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "kurbo 0.13.1",
  "thiserror 2.0.21",
@@ -9165,7 +9165,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-pdf"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "image",
  "js-sys",
@@ -9183,7 +9183,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-proof"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "log",
  "miniz_oxide 0.8.9",
@@ -9192,7 +9192,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-render"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "image",
  "log",
@@ -9207,7 +9207,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-ui-egui"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "craft-ui 0.1.0 (git+https://github.com/storytold/craft-libs?rev=d27646a5f7c8b4fc85d9dd3213b8c88b58e0088d)",
  "egui",
@@ -9232,7 +9232,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-zotero"
 version = "0.6.1"
-source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#841bdd1cd3879f1c2b499993160d083c5fa1a944"
+source = "git+https://github.com/shuff57/wordcraft?branch=equashion-editor#b2093fdc426c1bf27a23f9812a8bd52d72fb3e14"
 dependencies = [
  "log",
  "serde_json",

@@ -2628,6 +2628,21 @@ impl eframe::App for Suite {
         self.open_requested_decks(ctx);
         self.make_requested_graphs(ctx);
         self.open_double_clicked_graphs(ctx);
+        // `OFFICECRAFT_AUTOSEND=<prompt>`: once a tab is open, show its assistant and send the prompt
+        // (a demo: the window stays open and the user watches).
+        static AUTOSENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if let Ok(prompt) = std::env::var("OFFICECRAFT_AUTOSEND")
+            && self.pending.is_empty()
+            && let Some(id) = self.entries.iter().find(|e| e.kind == Kind::Word).map(|e| e.id)
+            && !AUTOSENT.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let cfg = self.ai_cfg.clone();
+            self.view = View::Tab(id);
+            if let Some(e) = self.entry_mut(id) {
+                e.chat.open = true;
+                e.chat.ask_text(prompt, ai::App::Docs, &cfg, ctx);
+            }
+        }
         if let Ok(dir) = std::env::var("OFFICECRAFT_SELFTEST_GRAPH") {
             self.graph_selftest(ctx, &dir);
         }
