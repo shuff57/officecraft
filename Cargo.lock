@@ -2281,7 +2281,7 @@ dependencies = [
 [[package]]
 name = "equashion-egui"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "egui",
  "equashion-layout 0.1.0 (git+https://github.com/shuff57/viSHual)",
@@ -2304,7 +2304,7 @@ dependencies = [
 [[package]]
 name = "equashion-font"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo 0.13.1",
@@ -2326,7 +2326,7 @@ dependencies = [
 [[package]]
 name = "equashion-layout"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "equashion-font 0.1.0 (git+https://github.com/shuff57/viSHual)",
  "equashion-math 0.1.0 (git+https://github.com/shuff57/viSHual)",
@@ -2346,7 +2346,7 @@ dependencies = [
 [[package]]
 name = "equashion-math"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "quick-xml 0.38.4",
  "serde",
@@ -2365,7 +2365,7 @@ dependencies = [
 [[package]]
 name = "equashion-render"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "equashion-layout 0.1.0 (git+https://github.com/shuff57/viSHual)",
  "kurbo 0.13.1",
@@ -4001,7 +4001,7 @@ dependencies = [
 [[package]]
 name = "math_core"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "base64 0.22.1",
  "miniz_oxide 0.7.4",
@@ -4013,7 +4013,7 @@ dependencies = [
 [[package]]
 name = "math_playground"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -7799,7 +7799,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vishual-mcp"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "serde_json",
 ]
@@ -7807,7 +7807,7 @@ dependencies = [
 [[package]]
 name = "vishual-ui-egui"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "ab_glyph",
  "async-trait",
@@ -7836,7 +7836,7 @@ dependencies = [
 [[package]]
 name = "viz_gen"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -7856,7 +7856,7 @@ dependencies = [
 [[package]]
 name = "viz_logic"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "equashion-math 0.1.0 (git+https://github.com/shuff57/viSHual)",
  "json-patch",
@@ -7870,7 +7870,7 @@ dependencies = [
 [[package]]
 name = "viz_types"
 version = "0.1.0"
-source = "git+https://github.com/shuff57/viSHual#8270d813e83720b6d66dc570d88bad62fe6b2daa"
+source = "git+https://github.com/shuff57/viSHual#9f5f8163050587b06560f9c5a2755e3487fd278a"
 dependencies = [
  "math_core",
  "schemars",
