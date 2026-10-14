@@ -140,6 +140,7 @@ impl Updater {
         }
         let mut open = true;
         egui::Window::new("Updates").open(&mut open).collapsible(false).default_width(560.0).show(ctx, |ui| {
+            ui.weak(format!("This build: {}", crate::platform::build_label()));
             if self.script.is_none() {
                 ui.label("Updates need the source checkout this build came from.");
                 ui.label("Run ./install.sh once from an OfficeCraft checkout (it records where that is).");

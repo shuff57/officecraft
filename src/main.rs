@@ -1746,8 +1746,7 @@ impl Suite {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(10.0);
-                    let target = if cfg!(target_arch = "wasm32") { "web" } else { "desktop" };
-                    ui.label(egui::RichText::new(format!("{target} {}", env!("OFFICECRAFT_BUILD"))).size(10.0).color(MUTED))
+                    ui.label(egui::RichText::new(platform::build_label()).size(10.0).color(MUTED))
                         .on_hover_text("The commit this build came from. The desktop and web builds match when these agree.");
                 });
                 ui.add_space(8.0);

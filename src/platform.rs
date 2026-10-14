@@ -78,3 +78,10 @@ pub fn read_lines(name: &str) -> Vec<String> {
 pub fn write_lines(name: &str, lines: &[String]) {
     let _ = write(name, &lines.join("\n"));
 }
+
+/// "desktop 92d0cc9" / "web 92d0cc9": which commit this build came from and which target it is, so
+/// the two can be compared. A trailing `+` means the tree had uncommitted changes.
+pub fn build_label() -> String {
+    let target = if cfg!(target_arch = "wasm32") { "web" } else { "desktop" };
+    format!("{target} {}", env!("OFFICECRAFT_BUILD"))
+}
