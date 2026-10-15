@@ -580,6 +580,22 @@ fn pick_into(dialog: rfd::AsyncFileDialog, inbox: Inbox) {
     });
 }
 
+/// A pick for DeckCraft, which numbers its requests: the file answers request `id`, and a dismissed
+/// picker cancels it so a late or unknown completion is never applied to whatever is open.
+fn pick_for_deck(dialog: rfd::AsyncFileDialog, inbox: deckcraft_ui_egui::Inbox, id: u64) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let event = match dialog.pick_file().await {
+            Some(file) => {
+                let bytes = file.read().await;
+                deckcraft_ui_egui::InboxEvent::File(deckcraft_ui_egui::InboxFile { id, name: file.file_name(), bytes })
+            }
+            None => deckcraft_ui_egui::InboxEvent::Cancelled { id },
+        };
+        inbox.lock().unwrap_or_else(|e| e.into_inner()).push(event);
+        repaint();
+    });
+}
+
 pub fn word_services() -> wordcraft_ui_egui::Services {
     let inbox = Inbox::default();
     let open_inbox = inbox.clone();
@@ -632,15 +648,15 @@ pub fn grid_services() -> gridcraft_ui_egui::Services {
 }
 
 pub fn deck_services() -> deckcraft_ui_egui::Services {
-    let inbox = Inbox::default();
+    let inbox = deckcraft_ui_egui::Inbox::default();
     let open_inbox = inbox.clone();
     deckcraft_ui_egui::Services {
-        open_async: Some(Box::new(move |purpose: &str| {
+        open_async: Some(Box::new(move |purpose: &str, id: u64| {
             match purpose {
-                "picture" => pick_into(rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS), open_inbox.clone()),
-                "audio" => pick_into(rfd::AsyncFileDialog::new().add_filter("Audio", AUDIO_EXTS), open_inbox.clone()),
-                "video" => pick_into(rfd::AsyncFileDialog::new().add_filter("Video", VIDEO_EXTS), open_inbox.clone()),
-                _ => pick_doc("Presentations", PRESENTATION_EXTS, false, open_inbox.clone()),
+                "picture" => pick_for_deck(rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS), open_inbox.clone(), id),
+                "audio" => pick_for_deck(rfd::AsyncFileDialog::new().add_filter("Audio", AUDIO_EXTS), open_inbox.clone(), id),
+                "video" => pick_for_deck(rfd::AsyncFileDialog::new().add_filter("Video", VIDEO_EXTS), open_inbox.clone(), id),
+                _ => pick_for_deck(rfd::AsyncFileDialog::new().add_filter("Presentations", PRESENTATION_EXTS), open_inbox.clone(), id),
             }
         })),
         write: Some(Box::new(|name: &str, bytes: &[u8]| save_file(name, bytes))),

@@ -299,7 +299,8 @@ impl Tab {
         match self {
             Tab::Word(a) => push(a.services.inbox.as_ref()),
             Tab::Grid(a) => push(a.services.inbox.as_ref()),
-            Tab::Deck(a) => push(a.services.inbox.as_ref()),
+            // DeckCraft numbers its file requests: a file handed over here is a new one.
+            Tab::Deck(a) => a.open_or_insert_bytes(name, &bytes),
             Tab::Pdf(a) => push(Some(&a.startup_inbox)),
             Tab::Graph(_) | Tab::Equation(_) => {}
         }
