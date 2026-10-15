@@ -1633,6 +1633,24 @@ impl Suite {
         }
     }
 
+    /// Draws `args`' graph and inserts it as a picture after the caret of document tab `doc`, with
+    /// the graph stored in the PNG. The caret then moves past the picture, so the next graph
+    /// follows it instead of replacing it.
+    fn insert_graph_picture(&mut self, doc: u64, args: &serde_json::Value, ctx: &egui::Context) -> Result<(), String> {
+        let (png, json) = render_graph(args)?;
+        let alt = args.get("title").and_then(serde_json::Value::as_str).filter(|t| !t.trim().is_empty()).map(|t| format!("Graph: {t}")).unwrap_or_else(|| "Graph".into());
+        let data = graphpic::base64_encode(&graphpic::embed(&png, &json).unwrap_or(png));
+        let e = self.entry_mut(doc).ok_or_else(|| "the document was closed".to_string())?;
+        let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+        let call = |host: &mut TabHost, command: &str, params: serde_json::Value| match ai::Host::call(host, "engine.execute", serde_json::json!({"command": command, "params": params})) {
+            ai::CallResult::Done(r) => r.map(|_| ()),
+            ai::CallResult::Pending(_) => Err("the document did not answer".to_string()),
+        };
+        call(&mut host, "insert.picture", serde_json::json!({"data": data, "width": 430, "alt": alt}))?;
+        let _ = call(&mut host, "select.collapse", serde_json::json!({"end": true}));
+        Ok(())
+    }
+
     /// Graphs a document's assistant asked for: each is drawn with viSHual (no tab, no window) and
     /// inserted as a picture at the caret, with the graph stored inside the PNG for editing later.
     fn make_requested_graphs(&mut self, ctx: &egui::Context) {
@@ -1642,29 +1660,26 @@ impl Suite {
         }) else {
             return;
         };
+        let (mut made, mut failed) = (0, Vec::new());
         for args in graphs {
-            let note = match render_graph(&args) {
-                Ok((png, json)) => {
-                    let alt = args.get("title").and_then(serde_json::Value::as_str).filter(|t| !t.trim().is_empty()).map(|t| format!("Graph: {t}")).unwrap_or_else(|| "Graph".into());
-                    let data = graphpic::base64_encode(&graphpic::embed(&png, &json).unwrap_or(png));
-                    match self.entry_mut(src) {
-                        Some(e) => {
-                            let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
-                            let r = ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "insert.picture", "params": {"data": data, "width": 430, "alt": alt}}));
-                            match r {
-                                ai::CallResult::Done(Ok(_)) => "Inserted a graph. Double-click it to edit it in viSHual.".to_string(),
-                                ai::CallResult::Done(Err(e)) => format!("The graph could not be inserted: {e}"),
-                                ai::CallResult::Pending(_) => "The graph could not be inserted here.".to_string(),
-                            }
-                        }
-                        None => continue,
-                    }
-                }
-                Err(e) => format!("The graph could not be drawn: {e}"),
-            };
-            if let Some(e) = self.entry_mut(src) {
-                e.chat.note(note);
+            match self.insert_graph_picture(src, &args, ctx) {
+                Ok(()) => made += 1,
+                Err(e) => failed.push(e),
             }
+        }
+        let mut note = match made {
+            0 => String::new(),
+            1 => "Inserted a graph. Double-click it to edit it in viSHual.".to_string(),
+            n => format!("Inserted {n} graphs. Double-click one to edit it in viSHual."),
+        };
+        if !failed.is_empty() {
+            if !note.is_empty() {
+                note.push(' ');
+            }
+            note.push_str(&format!("{} graph(s) could not be drawn: {}", failed.len(), failed.join("; ")));
+        }
+        if let Some(e) = self.entry_mut(src) {
+            e.chat.note(note);
         }
         ctx.request_repaint();
     }
@@ -1750,20 +1765,31 @@ impl Suite {
             }
         };
         let doc = self.new_tab(Kind::Word);
-        let (png, json) = render_graph(&serde_json::json!({"expressions": ["y=x^2", "y=2x+1"]})).unwrap_or_else(|e| fail(format!("draw: {e}")));
-        let first = graphpic::embed(&png, &json).unwrap_or_else(|| fail("embed".into()));
-        let _ = std::fs::write(format!("{dir}/first.png"), &first);
-        let data = graphpic::base64_encode(&first);
+        // Two graphs in a row, the way two create_graph calls in one turn arrive: the second must
+        // land after the first, not replace it.
+        for args in [serde_json::json!({"expressions": ["y=x^2", "y=2x+1"]}), serde_json::json!({"expressions": ["y=sin(x)"]})] {
+            if let Err(er) = self.insert_graph_picture(doc, &args, ctx) {
+                fail(format!("insert: {er}"));
+            }
+        }
+        let pictures = match self.entry_mut(doc).map(|e| &mut e.tab) {
+            Some(Tab::Word(a)) => a.session.doc.media.len(),
+            _ => 0,
+        };
+        if pictures != 2 {
+            fail(format!("two graphs were inserted but the document holds {pictures} picture(s)"));
+        }
+        // Select the first one again, as a click on it would.
         {
             let e = self.entry_mut(doc).unwrap();
             let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
-            if let ai::CallResult::Done(Err(er)) = ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "insert.picture", "params": {"data": data, "width": 430, "alt": "Graph"}})) {
-                fail(format!("insert: {er}"));
-            }
+            let _ = ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "select.range", "params": {"anchor": {"story": "body", "path": [0], "off": 0}, "focus": {"story": "body", "path": [0], "off": 3}}}));
             if let Tab::Word(a) = &mut e.tab {
                 a.canvas.picture_edit = true;
             }
         }
+        let first = picture(self, doc);
+        let _ = std::fs::write(format!("{dir}/first.png"), &first);
         self.open_double_clicked_graphs(ctx);
         let Some(g) = self.entries.iter().find(|e| e.graph_for == Some(doc)).map(|e| e.id) else { fail("double-click opened no graph tab".into()) };
         if let Some(Tab::Graph(a)) = self.entry_mut(g).map(|e| &mut e.tab) {

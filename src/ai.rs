@@ -959,10 +959,16 @@ impl Chat {
         let (ok, content) = match r {
             Ok(v) => (true, truncate(&v)),
             Err(e) => {
-                let hint = if e.contains("unknown command") {
-                    " Command ids look like `format.bold` or `text.insert`, not a description: call list_commands with a filter, or use a dedicated tool (replace_text, insert_blocks, build_slides)."
+                // The shell's own tools are not commands: calling one through batch/run_command fails.
+                let shell_tool = ["create_graph", "create_presentation", "web_search", "web_fetch", "insert_blocks", "build_slides", "replace_text"]
+                    .into_iter()
+                    .find(|t| e.contains(&format!("`{t}`")));
+                let hint = if let Some(t) = shell_tool {
+                    format!(" `{t}` is a tool of its own: call it directly as a separate tool call (once per item), never inside batch, execute or run_command.")
+                } else if e.contains("unknown command") {
+                    " Command ids look like `format.bold` or `text.insert`, not a description: call list_commands with a filter, or use a dedicated tool (replace_text, insert_blocks, build_slides).".to_string()
                 } else {
-                    ""
+                    String::new()
                 };
                 (false, json!({"error": format!("{e}.{hint}")}).to_string())
             }
@@ -1454,8 +1460,9 @@ fn mcp_definitions(app: App) -> Option<Vec<Value>> {
                 "required": ["slides"]}}}));
         out.push(json!({"type": "function", "function": {
             "name": "create_graph",
-            "description": "Draw a graph with viSHual and insert it into the document as a picture at the \
-                            cursor. Give each item as text: y=x^2, y=\\sin(x), a point (1,2), r=1+cos(theta), \
+            "description": "Draw ONE graph with viSHual and insert it into the document as a picture at the \
+                            cursor; call this tool once per graph, directly (never inside batch or execute), \
+                            when separate graphs are wanted. Give each item as text: y=x^2, y=\\sin(x), a point (1,2), r=1+cos(theta), \
                             x^2+y^2<4. A free letter such as a becomes a slider. Double-clicking the picture \
                             later opens it for editing.",
             "parameters": {"type": "object", "properties": {

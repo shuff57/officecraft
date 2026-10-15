@@ -53,6 +53,8 @@ web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlE
 # pdfcraft builds against its vendored forks; cargo ignores [patch] from dependencies, so the
 # suite shell repeats them or pdfcraft-render sees stock hayro and fails to compile.
 [patch.crates-io]
+# craft-pdf (shared PDF writer) refuses to build without the patched krilla at the workspace root.
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8", version = "=0.8.2" }
 hayro-interpret = { git = "https://github.com/storytold/pdfcraft" }
 hayro = { git = "https://github.com/storytold/pdfcraft" }
 hayro-syntax = { git = "https://github.com/storytold/pdfcraft" }
