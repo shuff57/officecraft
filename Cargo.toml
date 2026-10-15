@@ -28,9 +28,9 @@ vishual-ui-egui = { git = "https://github.com/shuff57/viSHual" }
 vishual-mcp = { git = "https://github.com/shuff57/viSHual" }
 # equaSHion's editor widget and its export (the Equations tab). The revision is the one WordCraft
 # and DeckCraft pin, so one copy of each crate is built; bump the three together.
-equashion-egui = { git = "https://github.com/shuff57/equaSHion", rev = "386b16cff9fddb69db2f1759aea384e8887e3970" }
-equashion-layout = { git = "https://github.com/shuff57/equaSHion", rev = "386b16cff9fddb69db2f1759aea384e8887e3970", features = ["extra-fonts"] }
-equashion-render = { git = "https://github.com/shuff57/equaSHion", rev = "386b16cff9fddb69db2f1759aea384e8887e3970", features = ["raster", "extra-fonts"] }
+equashion-egui = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54" }
+equashion-layout = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54", features = ["extra-fonts"] }
+equashion-render = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54", features = ["raster", "extra-fonts"] }
 png = "0.18"
 egui = "0.36"
 rfd = "0.17"
