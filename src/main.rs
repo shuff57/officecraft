@@ -30,17 +30,19 @@ enum Kind {
     Graph,
     /// equaSHion: the equation editor with Copy as LaTeX, MathML, OMML, text, image and SVG.
     Equation,
+    /// verSHion: question banks, exam layout, and printable exports.
+    Vershion,
 }
 
 impl Kind {
-    const ALL: [Kind; 6] = [Kind::Word, Kind::Grid, Kind::Deck, Kind::Pdf, Kind::Graph, Kind::Equation];
+    const ALL: [Kind; 7] = [Kind::Word, Kind::Grid, Kind::Deck, Kind::Pdf, Kind::Graph, Kind::Equation, Kind::Vershion];
     /// Apps that bring their own fonts and layout (never tiled beside another app).
     fn tileable(self) -> bool {
-        !matches!(self, Kind::Graph | Kind::Equation)
+        !matches!(self, Kind::Graph | Kind::Equation | Kind::Vershion)
     }
     /// Whether the suite's assistant can work in this app.
     fn has_assistant(self) -> bool {
-        self != Kind::Equation
+        !matches!(self, Kind::Equation | Kind::Vershion)
     }
     fn label(self) -> &'static str {
         match self {
@@ -50,6 +52,7 @@ impl Kind {
             Kind::Pdf => "PDF",
             Kind::Graph => "Graph",
             Kind::Equation => "Equations",
+            Kind::Vershion => "verSHion",
         }
     }
 }
@@ -62,6 +65,7 @@ enum Tab {
     Pdf(Box<pdfcraft_ui_egui::PdfCraftApp>),
     Graph(Box<vishual_ui_egui::VishualApp>),
     Equation(Box<equation::EquationApp>),
+    Vershion(Box<vershion::App>),
 }
 
 /// File dialogs for the Graph tab and where its gallery is kept (`<config>/officecraft/`).
@@ -169,6 +173,8 @@ impl Tab {
             Kind::Pdf => Tab::Pdf(Box::new(pdfcraft_ui_egui::PdfCraftApp::new())),
             Kind::Graph => Tab::Graph(Box::new(vishual_ui_egui::VishualApp::new(graph_services()))),
             Kind::Equation => Tab::Equation(Box::new(equation::EquationApp::new())),
+            // The app installs its own fonts when the tab is activated (`context_changed`).
+            Kind::Vershion => Tab::Vershion(Box::new(vershion::App::new_from(&egui::Context::default()))),
         }
     }
 
@@ -178,7 +184,7 @@ impl Tab {
             Tab::Grid(a) => a.logic(ctx),
             Tab::Deck(a) => a.logic(ctx),
             Tab::Pdf(a) => eframe::App::logic(a.as_mut(), ctx, frame),
-            Tab::Graph(_) | Tab::Equation(_) => {}
+            Tab::Graph(_) | Tab::Equation(_) | Tab::Vershion(_) => {}
         }
     }
 
@@ -189,6 +195,7 @@ impl Tab {
             Tab::Deck(a) => a.raw_input_hook(raw),
             Tab::Pdf(a) => eframe::App::raw_input_hook(a.as_mut(), ctx, raw),
             Tab::Graph(_) | Tab::Equation(_) => {}
+            Tab::Vershion(a) => a.raw_input_hook(ctx, raw),
         }
     }
 
@@ -200,6 +207,7 @@ impl Tab {
             Tab::Pdf(a) => eframe::App::ui(a.as_mut(), ui, frame),
             Tab::Graph(a) => a.ui(ui),
             Tab::Equation(a) => a.ui(ui),
+            Tab::Vershion(a) => a.ui(ui),
         }
     }
 }
@@ -237,6 +245,12 @@ fn web_can_browse() -> bool {
 }
 
 fn kind_for(path: &str) -> Option<Kind> {
+    // verSHion claims compound suffixes before the final-extension match (and never claims
+    // generic .json/.zip/.csv, which other tabs own).
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".parrot.json") || lower.ends_with(".ditto.json") || lower.ends_with(".question-bank.json") {
+        return Some(Kind::Vershion);
+    }
     let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "docx" | "docm" | "dotx" | "odt" | "rtf" | "txt" | "md" | "html" | "htm" => Some(Kind::Word),
@@ -244,12 +258,14 @@ fn kind_for(path: &str) -> Option<Kind> {
         "pptx" | "potx" | "ppsx" | "deckcraft" => Some(Kind::Deck),
         "pdf" => Some(Kind::Pdf),
         "vshl" | "vishual" => Some(Kind::Graph),
+        "gift" | "qti" => Some(Kind::Vershion),
         _ => None,
     }
 }
 
 const OPEN_EXTS: &[&str] = &[
     "docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "xlsx", "xlsm", "csv", "tsv", "pptx", "potx", "ppsx", "deckcraft", "pdf", "vshl", "vishual",
+    "gift", "qti",
 ];
 const MAX_RECENT: usize = 12;
 
@@ -271,6 +287,8 @@ impl Tab {
             Tab::Pdf(a) => a.first_dirty().is_some(),
             Tab::Graph(a) => a.changed,
             Tab::Equation(_) => false,
+            // The store saves on every mutation; there is no separate dirty flag.
+            Tab::Vershion(_) => false,
         }
     }
 
@@ -282,6 +300,7 @@ impl Tab {
             Tab::Deck(a) => a.context_changed(),
             Tab::Graph(a) => a.context_changed(ctx),
             Tab::Equation(a) => a.context_changed(ctx),
+            Tab::Vershion(a) => a.context_changed(ctx),
             // GridCraft and PdfCraft keep their font state private: the shell puts their fonts
             // and style back itself (`Look`).
             Tab::Grid(_) | Tab::Pdf(_) => {}
@@ -303,6 +322,7 @@ impl Tab {
             Tab::Deck(a) => a.open_or_insert_bytes(name, &bytes),
             Tab::Pdf(a) => push(Some(&a.startup_inbox)),
             Tab::Graph(_) | Tab::Equation(_) => {}
+            Tab::Vershion(a) => a.open_import_bytes(name, bytes.clone()),
         }
     }
 
@@ -324,6 +344,10 @@ impl Tab {
             Tab::Pdf(_) => Err("opening by path is not available in the browser".into()),
             Tab::Graph(a) => a.open_path(path),
             Tab::Equation(_) => Err("equations are not files".into()),
+            Tab::Vershion(a) => {
+                a.open_path(std::path::Path::new(path));
+                Ok(())
+            }
         }
     }
 }
@@ -647,6 +671,7 @@ fn kind_color(kind: Option<Kind>) -> egui::Color32 {
         Some(Kind::Pdf) => egui::Color32::from_rgb(194, 59, 69),
         Some(Kind::Graph) => egui::Color32::from_rgb(183, 121, 31),
         Some(Kind::Equation) => egui::Color32::from_rgb(98, 76, 168),
+        Some(Kind::Vershion) => egui::Color32::from_rgb(47, 97, 68),
         None => egui::Color32::GRAY,
     }
 }
@@ -797,6 +822,7 @@ fn kind_abbr(kind: Option<Kind>) -> &'static str {
         Some(Kind::Pdf) => "Pd",
         Some(Kind::Graph) => "Gr",
         Some(Kind::Equation) => "Eq",
+        Some(Kind::Vershion) => "Vs",
         None => "?",
     }
 }
@@ -931,6 +957,16 @@ fn thumb(painter: &egui::Painter, kind: Option<Kind>, area: egui::Rect) {
             r(30.0, 29.0, 40.0, 3.0, line, 1.0, card);
             r(36.0, 40.0, 28.0, 6.0, c, 2.0, card);
         }
+        Some(Kind::Vershion) => {
+            // A numbered test page with an answer-key stripe.
+            let page = egui::Rect::from_center_size(center, egui::vec2(58.0, 74.0));
+            painter.rect_filled(page, 3.0, paper);
+            r(9.0, 9.0, 34.0, 4.0, c, 1.0, page);
+            for i in 0..5 {
+                r(9.0, 22.0 + i as f32 * 9.0, 40.0, 3.0, line, 1.0, page);
+            }
+            r(9.0, 66.0, 40.0, 3.0, c, 1.0, page);
+        }
         None => {}
     }
 }
@@ -1059,6 +1095,12 @@ struct Suite {
 
 impl Suite {
     fn new() -> Self {
+        // The verSHion tab shares the standalone app's store; install its backend once.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            vershion::store::migrate_legacy_dir();
+            vershion::store::init(Box::new(vershion::store::FsBackend::from_env()));
+        }
         let mut folders = load_folders();
         // First run: show ~/Documents so Home is not an empty page.
         if folders.is_empty()
@@ -1083,6 +1125,13 @@ impl Suite {
     /// Starts a fresh, empty instance of `kind` and shows it.
     /// A tab with a new, blank file in it (what New file makes).
     fn new_tab(&mut self, kind: Kind) -> u64 {
+        // One verSHion workspace tab: reopening focuses it rather than making a second store.
+        if kind == Kind::Vershion
+            && let Some(id) = self.entries.iter().find(|e| e.kind == kind).map(|e| e.id)
+        {
+            self.view = View::Tab(id);
+            return id;
+        }
         let tab = match kind {
             // A presentation needs a slide to work on: an assistant (or a first click) has nothing
             // to act on in an empty session.
@@ -2089,9 +2138,9 @@ impl Suite {
             }
 
             ui.add_space(18.0);
-            let starts = [(Kind::Word, "WordCraft", "Docs"), (Kind::Grid, "GridCraft", "Sheets"), (Kind::Deck, "DeckCraft", "Slides"), (Kind::Pdf, "PdfCraft", "PDF"), (Kind::Graph, "viSHual", "Graphs"), (Kind::Equation, "equaSHion", "Equations")];
+            let starts = [(Kind::Word, "WordCraft", "Docs"), (Kind::Grid, "GridCraft", "Sheets"), (Kind::Deck, "DeckCraft", "Slides"), (Kind::Pdf, "PdfCraft", "PDF"), (Kind::Graph, "viSHual", "Graphs"), (Kind::Equation, "equaSHion", "Equations"), (Kind::Vershion, "verSHion", "Exams")];
             ui.spacing_mut().item_spacing.x = 12.0;
-            ui.columns(6, |cols| {
+            ui.columns(7, |cols| {
                 for (col, (kind, label, sub)) in cols.iter_mut().zip(starts) {
                     let card = framed().inner_margin(egui::Margin::symmetric(12, 10)).show(col, |ui| {
                         ui.set_width(ui.available_width());
@@ -2125,6 +2174,7 @@ impl Suite {
                             (Filter::Only(Kind::Pdf), "PDF"),
                             (Filter::Only(Kind::Graph), "Graphs"),
                             (Filter::Only(Kind::Equation), "Equations"),
+                            (Filter::Only(Kind::Vershion), "Exams"),
                         ] {
                             if pill(ui, want_filter == f, label).clicked() {
                                 want_filter = f;
@@ -2366,6 +2416,7 @@ impl ai::Host for TabHost<'_> {
             }
             Tab::Graph(a) => Done(a.control(method, params)),
             Tab::Equation(_) => Done(Err("the assistant does not work in the Equations tab".into())),
+            Tab::Vershion(_) => Done(Err("the assistant does not work in the verSHion tab".into())),
         }
     }
 }
@@ -2377,8 +2428,8 @@ fn ai_app(kind: Kind) -> ai::App {
         Kind::Deck => ai::App::Slides,
         Kind::Pdf => ai::App::Pdf,
         Kind::Graph => ai::App::Graph,
-        // Never asked: the Equations tab has no assistant (`Kind::has_assistant`).
-        Kind::Equation => ai::App::Docs,
+        // Never asked: the Equations and verSHion tabs have no assistant (`Kind::has_assistant`).
+        Kind::Equation | Kind::Vershion => ai::App::Docs,
     }
 }
 
@@ -2410,6 +2461,7 @@ impl eframe::App for Suite {
                     "pdf" => Some(Kind::Pdf),
                     "graph" => Some(Kind::Graph),
                     "equations" => Some(Kind::Equation),
+                    "vershion" | "exams" => Some(Kind::Vershion),
                     _ => None,
                 };
                 shot_tab = kind;
@@ -2553,9 +2605,9 @@ impl eframe::App for Suite {
             }
             if n % EVERY == 0 {
                 let ids: Vec<u64> = self.entries.iter().map(|e| e.id).collect();
-                // Every app in order (Word, Grid, Deck, Pdf, Graph, Equations), Home (index 6, past
-                // the tabs), then the same again in another order so each pair of apps meets.
-                let order = [0usize, 1, 2, 3, 4, 5, 6, 5, 2, 4, 0, 6, 3, 5, 1, 4, 6, 2, 5, 0];
+                // Every app in order (Word, Grid, Deck, Pdf, Graph, Equations, verSHion), Home
+                // (index 7, past the tabs), then the same again so each pair of apps meets.
+                let order = [0usize, 1, 2, 3, 4, 5, 6, 7, 6, 5, 2, 4, 0, 7, 3, 5, 1, 4, 7, 2, 6, 0];
                 let i = order[step % order.len()];
                 self.view = ids.get(i).map(|id| View::Tab(*id)).unwrap_or(View::Home);
             }

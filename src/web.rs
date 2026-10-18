@@ -75,6 +75,24 @@ pub fn start() {
         if let Err(e) = vishual_ui_egui::init_web_gpu().await {
             log::error!("graph renderer: {e}");
         }
+        // The verSHion tab needs its own browser store before the suite constructs any tab.
+        let repaint: Rc<dyn Fn()> = Rc::new(|| {
+            CTX.with(|c| {
+                if let Some(ctx) = &*c.borrow() {
+                    ctx.request_repaint();
+                }
+            });
+        });
+        match vershion::store::web::IdbBackend::open("officecraft-vershion", repaint).await {
+            Ok(backend) => vershion::store::init(Box::new(backend)),
+            Err(e) => {
+                log::error!("verSHion store: {e}");
+                if let Some(el) = document.get_element_by_id(LOADING_ID) {
+                    el.set_inner_html(&format!("<p>verSHion storage could not open: {e}</p>"));
+                }
+                return;
+            }
+        }
         let mut options = eframe::WebOptions::default();
         if query().contains("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
