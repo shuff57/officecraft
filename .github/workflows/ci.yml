@@ -5,7 +5,11 @@ name: ci
 on:
   push:
     branches: [main]
+    # Screenshots and prose are not compiled in (the only include_* is under assets/), so a
+    # docs-only change cannot change what the checks below see or what deploy-web publishes.
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -13,14 +17,22 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info in CI builds: the target dir that rust-cache saves and restores is several
+  # times smaller (those two steps were ~1-2.5 min each), and linking the test binary is faster.
+  # Panic messages keep their file:line; only debugger symbols are dropped.
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev pkg-config
+        # man-db rebuilds its index after every install (~10 s on hosted runners); CI never reads it.
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev libwayland-dev libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev pkg-config
       - name: Private dependency access
         # shuff57/viSHual is private. A read-only deploy key on that repo, stored here as the
         # VISHUAL_DEPLOY_KEY secret, lets cargo fetch it.
@@ -38,6 +50,11 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+        with:
+          # PRs restore main's cache (GitHub lets a PR read the default branch's caches) but do not
+          # upload their own: that upload was the slowest step of a warm run, and a PR cache is
+          # only reusable by later pushes to that same PR.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Desktop build
         run: cargo check --locked
       - name: Browser build type-check
@@ -50,6 +67,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: check
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
