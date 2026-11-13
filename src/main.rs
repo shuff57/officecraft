@@ -651,6 +651,10 @@ fn kind_color(kind: Option<Kind>) -> egui::Color32 {
     }
 }
 
+/// The contact page. A page opens the copy next to it (so a Pages preview stays on the preview);
+/// the desktop build opens the published site.
+const CONTACT_URL: &str = if cfg!(target_arch = "wasm32") { "contact.html" } else { "https://officecraft.lefthanddev.com/contact.html" };
+
 /// The one chrome accent on Home: selection, primary button, active toggle.
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(11, 122, 117);
 
@@ -2029,6 +2033,15 @@ impl Suite {
                     add_folder = true;
                 }
                 }
+                // the sidebar's foot: the contact page (contact.html, the shared contact form)
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    ui.add_space(12.0);
+                    let resp = side_row(ui, false, false, "Contact", None, false).0;
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, true, "Contact"));
+                    if resp.on_hover_text("Send a question or note (opens in a new tab)").clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(CONTACT_URL));
+                    }
+                });
             });
 
         egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::from_rgb(237, 241, 245)).inner_margin(egui::Margin::symmetric(36, 26))).show(ui, |ui| {
