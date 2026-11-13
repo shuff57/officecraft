@@ -36,6 +36,10 @@ def main(src: pathlib.Path, out: pathlib.Path) -> None:
         if name != wasm_name:
             (out / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(src / name, out / name)
+    # Static pages next to the app, which index.html does not reference (the Home sidebar opens them).
+    for name in ("contact.html",):
+        if (src / name).is_file():
+            shutil.copy(src / name, out / name)
     # wasm-bindgen snippets (JS helpers some crates bring) are imported by the loader script.
     if (src / "snippets").is_dir():
         shutil.copytree(src / "snippets", out / "snippets", dirs_exist_ok=True)
