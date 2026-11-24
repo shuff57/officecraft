@@ -76,13 +76,31 @@ org repository, fork it or use a local clone.
 The **Assistant** button opens a chat that edits the open file through that app's own agent tools
 (the same tool sets the apps expose over MCP). The ⚙ button picks the provider:
 
-- **Local endpoint**: any OpenAI-compatible server (default `http://127.0.0.1:11434/v1`).
+- **Custom endpoint**: any OpenAI-compatible API, with an optional API key: a local server
+  (default `http://127.0.0.1:11434/v1`), your own gateway, or a pay-as-you-go service. The Service
+  menu fills in DeepSeek, Groq, Together AI, Mistral, Fireworks, Cerebras, Ollama or LM Studio.
 - **Ollama Cloud**: `https://ollama.com/v1`, default model `gpt-oss:120b`.
 - **OpenRouter**: `https://openrouter.ai/api/v1`, default model `openai/gpt-oss-120b`.
 
 Settings are stored in `~/.config/officecraft/ai.json`. API keys go in a separate owner-only file,
 `~/.config/officecraft/ai-keys.json` (mode 0600). `OFFICECRAFT_AI_URL`, `OFFICECRAFT_AI_MODEL`
 and `OFFICECRAFT_AI_KEY` override them for one run.
+
+## Files on Home
+
+Add folders in the sidebar and browse them one level at a time; the path above the list goes back
+up. Right-click a file or folder to rename it, show it in the file manager, copy its path or move it
+to the Trash (the system Trash; where a folder has none, such as a NAS share, OfficeCraft Trash in
+the sidebar, with Restore). Drag a file onto a folder, a part of the path or a sidebar folder to move
+it; drag sidebar folders and tabs to reorder them. A rename or move follows an open Docs, Sheets or
+Slides tab.
+
+Copy and paste between Docs, Sheets and Slides keeps formatting: a Sheets range pastes into Docs as
+a table.
+
+Closing the window or restarting after an update asks first when a tab has unsaved work. Docs and
+Slides keep recovery copies of unsaved documents in `~/.local/share/officecraft/recovery`; after a
+crash they come back on the next launch (`OFFICECRAFT_NO_RECOVERY=1` turns this off).
 
 ## Development
 

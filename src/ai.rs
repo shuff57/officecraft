@@ -21,6 +21,19 @@ const DEFAULT_BASE: &str = "http://127.0.0.1:11434/v1";
 // OFFICECRAFT_AI_MODEL (qwen3-coder:30b is far better at multi-step edits).
 const DEFAULT_MODEL: &str = "qwen3-coder:30b";
 
+/// Services the custom endpoint fills in by name: (name, OpenAI-compatible base URL). The model
+/// list comes from the service itself (Test connection).
+const CUSTOM_PRESETS: &[(&str, &str)] = &[
+    ("Ollama on this computer", "http://127.0.0.1:11434/v1"),
+    ("LM Studio on this computer", "http://127.0.0.1:1234/v1"),
+    ("DeepSeek", "https://api.deepseek.com/v1"),
+    ("Groq", "https://api.groq.com/openai/v1"),
+    ("Together AI", "https://api.together.xyz/v1"),
+    ("Mistral", "https://api.mistral.ai/v1"),
+    ("Fireworks", "https://api.fireworks.ai/inference/v1"),
+    ("Cerebras", "https://api.cerebras.ai/v1"),
+];
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Provider {
     Local,
@@ -45,7 +58,7 @@ impl Provider {
     }
     pub fn title(self) -> &'static str {
         match self {
-            Provider::Local => "Local endpoint",
+            Provider::Local => "Custom endpoint",
             Provider::Cloud => "Ollama Cloud",
             Provider::OpenRouter => "OpenRouter",
         }
@@ -78,7 +91,8 @@ pub struct Config {
     pub local_url: String,
     /// The chosen model for each provider, in `Provider::ALL` order; empty = that provider's default.
     models: [String; 3],
-    /// API keys for Ollama Cloud and OpenRouter (`keys[provider.index()]`; the local slot is unused).
+    /// API keys (`keys[provider.index()]`): the custom endpoint's (optional: a local server needs
+    /// none), Ollama Cloud's and OpenRouter's.
     keys: [String; 3],
 }
 
@@ -98,7 +112,7 @@ impl Config {
             provider: Provider::from_id(&get(&json, "provider")).unwrap_or(Provider::Local),
             local_url: get(&json, "base_url"),
             models: [get(&json, "model"), get(&json, "cloud_model"), get(&json, "openrouter_model")],
-            keys: [String::new(), get(&keys_json, "cloud"), get(&keys_json, "openrouter")],
+            keys: [get(&keys_json, "custom"), get(&keys_json, "cloud"), get(&keys_json, "openrouter")],
         };
         c.apply();
         c
@@ -142,7 +156,7 @@ impl Config {
             "openrouter_model": self.models[2],
         });
         platform::write("ai.json", &serde_json::to_string_pretty(&settings).unwrap_or_default())?;
-        let keys = json!({"cloud": self.keys[1], "openrouter": self.keys[2]});
+        let keys = json!({"custom": self.keys[0], "cloud": self.keys[1], "openrouter": self.keys[2]});
         platform::write_private("ai-keys.json", &serde_json::to_string_pretty(&keys).unwrap_or_default())
     }
 }
@@ -198,8 +212,32 @@ impl Settings {
             egui::Grid::new("ai_settings_grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
                 match p {
                     Provider::Local => {
+                        // Fill the endpoint for a known service; any OpenAI-compatible URL works.
+                        ui.label("Service");
+                        let shown = if d.local_url.trim().is_empty() { DEFAULT_BASE } else { d.local_url.trim_end_matches('/') };
+                        let current = CUSTOM_PRESETS.iter().find(|(_, url)| shown == *url).map(|(name, _)| *name).unwrap_or("Other");
+                        egui::ComboBox::from_id_salt("ai_custom_preset").selected_text(current).width(300.0).show_ui(ui, |ui| {
+                            for (name, url) in CUSTOM_PRESETS {
+                                if ui.selectable_label(current == *name, *name).clicked() {
+                                    d.local_url = url.to_string();
+                                    // The new service has its own models (pick from its list) and its own key:
+                                    // never send one service's key to another.
+                                    d.models[0].clear();
+                                    d.keys[0].clear();
+                                    *self.test.lock().unwrap() = None;
+                                    *self.probe.lock().unwrap() = Probe::default();
+                                }
+                            }
+                        });
+                        ui.end_row();
                         ui.label("Endpoint");
                         ui.add(egui::TextEdit::singleline(&mut d.local_url).hint_text(DEFAULT_BASE).desired_width(300.0));
+                        ui.end_row();
+                        ui.label("API key");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(&mut d.keys[0]).password(!self.reveal).hint_text("none for a local server").desired_width(260.0));
+                            ui.checkbox(&mut self.reveal, "Show");
+                        });
                         ui.end_row();
                     }
                     _ => {
@@ -221,14 +259,14 @@ impl Settings {
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(match p {
-                    Provider::Local => "Any OpenAI-compatible server: Ollama (http://127.0.0.1:11434/v1), LM Studio (http://127.0.0.1:1234/v1), llama.cpp, vLLM.",
+                    Provider::Local => "Any OpenAI-compatible API: a local server (Ollama, LM Studio, llama.cpp, vLLM), your own gateway, or a pay-as-you-go service such as DeepSeek or Groq. A hosted service gets your prompts and documents.",
                     Provider::Cloud => "Large hosted models. Your prompts and documents are sent to ollama.com.",
                     Provider::OpenRouter => "Many hosted models. Your prompts and documents are sent to openrouter.ai and on to the lab running the model.",
                 })
                 .size(12.0)
                 .weak(),
             );
-            if p != Provider::Local {
+            if p != Provider::Local || !d.keys[0].is_empty() {
                 ui.label(
                     egui::RichText::new(if cfg!(target_arch = "wasm32") {
                         "The key is kept in this browser's storage for this site. Anyone using this browser profile can read it."
