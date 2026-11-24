@@ -496,6 +496,30 @@ struct TileCol {
     rows: Vec<(u64, f32)>,
 }
 
+/// Where tab `dragged` goes when dropped at `x` on the tab bar: its index among the tabs, counted
+/// before it is taken out (`None` with no other tabs).
+fn tab_insert_index(rects: &[(u64, egui::Rect)], dragged: u64, x: f32) -> Option<usize> {
+    let mut seen_other = false;
+    let mut index = 0;
+    let mut before_others = 0;
+    for (k, (id, r)) in rects.iter().enumerate() {
+        if *id == dragged {
+            index = k;
+            continue;
+        }
+        seen_other = true;
+        if r.center().x < x {
+            before_others += 1;
+        }
+    }
+    if !seen_other {
+        return None;
+    }
+    // `before_others` counts the other tabs left of the drop; in the full list (dragged tab
+    // still in it) that is the same index if the tab came from the right, one more if from the left.
+    Some(if before_others >= index { before_others + 1 } else { before_others })
+}
+
 /// Where a dragged tile lands relative to the tile under the pointer.
 #[derive(Clone, Copy, PartialEq)]
 enum DropZone {
@@ -1254,6 +1278,10 @@ struct Suite {
     file_op: Option<FileOp>,
     /// Home shows OfficeCraft's own trash (items from places with no system trash).
     show_trash: bool,
+    /// The tab last scrolled into view in the tab strip.
+    tab_in_view: Option<u64>,
+    /// The tab strip is wider than the bar: show the ⋯ list of all tabs.
+    tabs_overflow: bool,
     /// The last Home file operation that went through ("Moved … to the Trash"), shown in teal.
     status: Option<String>,
     /// The window had keyboard focus last frame (desktop: refresh Home when it comes back).
@@ -1358,7 +1386,7 @@ impl Suite {
             Some(_) if recent.is_empty() => (Some(0), Vec::new()),
             _ => (None, Vec::new()),
         };
-        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, status: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
+        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, tab_in_view: None, tabs_overflow: false, status: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite
     }
 
@@ -3685,6 +3713,9 @@ impl eframe::App for Suite {
         let mut toggle_tile = false;
         let mut drag_now: Option<u64> = None;
         let mut drop_tab: Option<(u64, egui::Pos2)> = None;
+        // Where each tab was drawn this frame: drop positions for reordering by drag.
+        let mut tab_rects: Vec<(u64, egui::Rect)> = Vec::new();
+        let mut bar_rect = egui::Rect::NOTHING;
         let mut tile_in: Option<u64> = None;
         let mut tile_out: Option<u64> = None;
         // Tiled: the shell's own bar takes the front app's colours, not whichever installed last.
@@ -3713,22 +3744,36 @@ impl eframe::App for Suite {
                 if hresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     select = Some(View::Home);
                 }
+                bar_rect = ui.max_rect();
+                // Many tabs: the strip scrolls (mouse wheel) and keeps the active tab in view; the
+                // ⋯ menu lists them all. Room is left for the controls on the right.
+                let strip_w = (ui.available_width() - 300.0).max(120.0);
+                let strip = egui::ScrollArea::horizontal()
+                    .id_salt("tab_strip")
+                    .max_width(strip_w)
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| { ui.horizontal_centered(|ui| {
                 for e in &self.entries {
                     let title = if e.tab.is_dirty() { format!("{} •", e.name) } else { e.name.clone() };
                     let (stripe, _) = ui.allocate_exact_size(egui::vec2(3.0, 14.0), egui::Sense::hover());
                     ui.painter().rect_filled(stripe, 1.5, kind_color(Some(e.kind)));
                     let shown = title;
                     let r = ui.selectable_label(self.view == View::Tab(e.id), shown).on_hover_text(e.path.as_deref().unwrap_or("Not saved yet"));
-                    // Also draggable (onto the content to tile it) and right-clickable.
+                    // Also draggable (along the bar to reorder, onto the content to tile) and
+                    // right-clickable.
                     let r = r.interact(egui::Sense::click_and_drag());
                     let tileable = e.kind.tileable();
+                    if self.view == View::Tab(e.id) && self.tab_in_view != Some(e.id) {
+                        r.scroll_to_me(Some(egui::Align::Center));
+                        self.tab_in_view = Some(e.id);
+                    }
                     if r.clicked() {
                         select = Some(View::Tab(e.id));
                     }
-                    if tileable && r.dragged() {
+                    if r.dragged() {
                         drag_now = Some(e.id);
                     }
-                    if tileable && r.drag_stopped() {
+                    if r.drag_stopped() {
                         drop_tab = ui.ctx().input(|i| i.pointer.latest_pos()).map(|p| (e.id, p));
                     }
                     let in_tiles = self.tiles.len() >= 2 && self.tiles.contains(&e.id);
@@ -3749,10 +3794,26 @@ impl eframe::App for Suite {
                             ui.close();
                         }
                     });
-                    if ui.small_button("×").on_hover_text("Close tab").clicked() {
+                    let x = ui.small_button("×").on_hover_text("Close tab");
+                    if x.clicked() {
                         close = Some(e.id);
                     }
+                    tab_rects.push((e.id, stripe.union(r.rect).union(x.rect)));
                     ui.separator();
+                }
+                }); });
+                self.tabs_overflow = strip.content_size.x > strip.inner_rect.width() + 1.0;
+                if self.tabs_overflow {
+                    ui.menu_button("⋯", |ui| {
+                        for e in &self.entries {
+                            if ui.selectable_label(self.view == View::Tab(e.id), &e.name).clicked() {
+                                select = Some(View::Tab(e.id));
+                                ui.close();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("All open tabs");
                 }
                 ui.menu_button("+", |ui| {
                     for kind in Kind::ALL {
@@ -3858,7 +3919,20 @@ impl eframe::App for Suite {
         if let Some(id) = tile_out {
             self.take_out_tile(id);
         }
-        if let Some((id, p)) = drop_tab {
+        if let Some((id, p)) = drop_tab
+            && p.y <= bar_rect.bottom() + 6.0
+        {
+            // Released on the tab bar: the tab moves to where it was dropped.
+            if let Some(to) = tab_insert_index(&tab_rects, id, p.x)
+                && let Some(from) = self.entries.iter().position(|e| e.id == id)
+            {
+                let e = self.entries.remove(from);
+                let to = if to > from { to - 1 } else { to }.min(self.entries.len());
+                self.entries.insert(to, e);
+            }
+        } else if let Some((id, p)) = drop_tab
+            && self.entries.iter().any(|e| e.id == id && e.kind.tileable())
+        {
             // Released over the content, not back on the tab bar.
             if p.y > ui.max_rect().min.y + 44.0 && !self.tiles.contains(&id) {
                 let room = self.tile_layout.len() < self.tile_max_cols;
@@ -3871,8 +3945,24 @@ impl eframe::App for Suite {
             && let Some(p) = ui.ctx().input(|i| i.pointer.latest_pos())
         {
             let name = self.entries.iter().find(|e| e.id == id).map(|e| e.name.clone()).unwrap_or_default();
+            let tileable = self.entries.iter().any(|e| e.id == id && e.kind.tileable());
             let layer = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("tab-drag")));
-            layer.text(p + egui::vec2(14.0, 14.0), egui::Align2::LEFT_TOP, format!("Tile {name}"), egui::FontId::proportional(13.0), ACCENT);
+            let on_bar = p.y <= bar_rect.bottom() + 6.0;
+            if on_bar {
+                // Where the tab would land: a caret between tabs.
+                let others: Vec<&egui::Rect> = tab_rects.iter().filter(|(t, _)| *t != id).map(|(_, r)| r).collect();
+                let before = others.iter().filter(|r| r.center().x < p.x).count();
+                let x = match others.get(before) {
+                    Some(r) => Some(r.left() - 3.0),
+                    None => others.last().map(|r| r.right() + 3.0),
+                };
+                if let Some(x) = x {
+                    layer.vline(x, bar_rect.top() + 4.0..=bar_rect.bottom() - 4.0, egui::Stroke::new(2.0, ACCENT));
+                }
+                layer.text(p + egui::vec2(14.0, 14.0), egui::Align2::LEFT_TOP, format!("Move {name}"), egui::FontId::proportional(13.0), ACCENT);
+            } else if tileable {
+                layer.text(p + egui::vec2(14.0, 14.0), egui::Align2::LEFT_TOP, format!("Tile {name}"), egui::FontId::proportional(13.0), ACCENT);
+            }
             ui.ctx().request_repaint();
         }
         if toggle_tile {
@@ -4126,4 +4216,35 @@ fn main() -> eframe::Result {
             Ok(Box::new(suite))
         }),
     )
+}
+
+#[cfg(test)]
+mod tab_order_tests {
+    use super::tab_insert_index;
+
+    /// Tabs A..D at x = 0, 100, 200, 300 (60 wide), ids 1..4.
+    fn rects() -> Vec<(u64, egui::Rect)> {
+        (0..4).map(|i| (i as u64 + 1, egui::Rect::from_min_size(egui::pos2(i as f32 * 100.0, 0.0), egui::vec2(60.0, 20.0)))).collect()
+    }
+
+    /// Applies a drop the way the tab bar does and returns the new order.
+    fn drop(id: u64, x: f32) -> Vec<u64> {
+        let mut order: Vec<u64> = (1..=4).collect();
+        let to = tab_insert_index(&rects(), id, x).unwrap();
+        let from = order.iter().position(|t| *t == id).unwrap();
+        let t = order.remove(from);
+        let to = if to > from { to - 1 } else { to }.min(order.len());
+        order.insert(to, t);
+        order
+    }
+
+    #[test]
+    fn drops_land_between_the_tabs_under_the_pointer() {
+        assert_eq!(drop(2, 400.0), [1, 3, 4, 2]);
+        assert_eq!(drop(4, -10.0), [4, 1, 2, 3]);
+        assert_eq!(drop(2, 250.0), [1, 3, 2, 4]);
+        assert_eq!(drop(3, 50.0), [1, 3, 2, 4]);
+        assert_eq!(drop(2, 60.0), [1, 2, 3, 4]);
+        assert!(tab_insert_index(&rects()[..1], 1, 10.0).is_none());
+    }
 }
