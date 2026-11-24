@@ -57,16 +57,17 @@ pub fn text() -> Option<String> {
     open()?.get_text().ok()
 }
 
-/// The HTML to paste: OfficeCraft's own last copy while the clipboard still holds its text,
-/// else the HTML another program put there.
+/// The HTML to paste: the clipboard's, else OfficeCraft's own last copy while the clipboard
+/// still holds its text.
 pub fn html() -> Option<String> {
-    let current = text();
-    if let Some((t, h)) = LAST.lock().unwrap_or_else(|e| e.into_inner()).clone()
-        && current.as_deref().is_some_and(|c| same_text(c, &t))
-    {
-        return Some(h);
+    let mut clipboard = open()?;
+    // What is on the clipboard now wins; OfficeCraft's own copy fills in only where the desktop
+    // kept the text but not the HTML.
+    if let Ok(h) = clipboard.get().html() {
+        return (h.len() <= MAX_HTML).then_some(h);
     }
-    open()?.get().html().ok().filter(|h| h.len() <= MAX_HTML)
+    let current = clipboard.get_text().ok()?;
+    LAST.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(t, _)| same_text(&current, t)).map(|(_, h)| h)
 }
 
 #[cfg(test)]

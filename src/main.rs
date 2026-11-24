@@ -192,16 +192,6 @@ fn deck_session(#[allow(unused_mut)] mut session: deckcraft_engine::Session) -> 
     session
 }
 
-/// Whether WordCraft left a copy of an unsaved document in `dir` (a record folder holding a
-/// snapshot). A Word tab opened at launch then offers it back.
-#[cfg(not(target_arch = "wasm32"))]
-fn word_recovery_waiting(dir: &std::path::Path) -> bool {
-    let Ok(records) = std::fs::read_dir(dir) else { return false };
-    records.flatten().any(|r| {
-        std::fs::read_dir(r.path()).is_ok_and(|files| files.flatten().any(|f| f.file_name().to_string_lossy().starts_with("snapshot-")))
-    })
-}
-
 impl Tab {
     fn create(kind: Kind) -> Tab {
         match kind {
@@ -677,6 +667,8 @@ struct Entry {
     graph_for: Option<u64>,
     /// PDF is driven over its control channel; the client is made the first time it is needed.
     pdf_client: Option<pdfcraft_ui_egui::control::ControlClient>,
+    /// The path the app reported last frame, as it spelled it (`sync_paths`).
+    seen_path: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -687,11 +679,16 @@ enum Filter {
 
 /// A folder listing the browser delivered: a folder the visitor just added (`added`) or a
 /// fresh listing of one already in the sidebar.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+/// (Each build reads only some of the fields.)
+#[allow(dead_code)]
 struct FolderScan {
     key: String,
     rows: Vec<Row>,
     added: bool,
+    /// Desktop: which request this answers (older answers for the same folder are dropped).
+    seq: u64,
+    /// Desktop: the folder could not be read.
+    error: Option<String>,
 }
 type FolderScans = std::sync::Arc<std::sync::Mutex<Vec<FolderScan>>>;
 
@@ -726,7 +723,7 @@ fn row_for(path: &str) -> Row {
 /// browser page, or when the file cannot be resolved.
 fn canonical_path(path: &str) -> String {
     #[cfg(not(target_arch = "wasm32"))]
-    if let Ok(p) = std::fs::canonicalize(path)
+    if let Ok(p) = dunce::canonicalize(path)
         && let Some(s) = p.to_str()
     {
         return s.to_string();
@@ -741,10 +738,8 @@ fn file_name_of(path: &str) -> String {
 /// One level of folder `dir` (desktop): its subfolders, then the files a Craft app opens,
 /// newest first. Read on a worker thread: a NAS or network folder can be slow.
 #[cfg(not(target_arch = "wasm32"))]
-fn list_level(dir: &str) -> Vec<Row> {
-    files::list_dir(std::path::Path::new(dir), |p| kind_for(p).is_some())
-        .map(|v| v.into_iter().filter_map(|p| p.to_str().map(row_for)).collect())
-        .unwrap_or_default()
+fn list_level(dir: &str) -> Result<Vec<Row>, String> {
+    files::list_dir(std::path::Path::new(dir), |p| kind_for(p).is_some()).map(|v| v.into_iter().filter_map(|p| p.to_str().map(row_for)).collect())
 }
 
 /// Folders the visitor added. A page can't reopen a folder without a fresh pick, so the browser
@@ -753,7 +748,15 @@ fn load_folders() -> Vec<String> {
     if cfg!(target_arch = "wasm32") {
         return Vec::new();
     }
-    platform::read_lines("folders.txt")
+    // One spelling per folder (symlinks resolved), so paths listed under it match open tabs.
+    let mut out: Vec<String> = Vec::new();
+    for f in platform::read_lines("folders.txt") {
+        let c = canonical_path(&f);
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn save_folders(list: &[String]) {
@@ -1242,6 +1245,14 @@ fn save_session(lines: &[String]) {
     platform::write_lines("session.txt", lines);
 }
 
+/// Whether Home has the shown folder's files yet.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+enum Listing {
+    Ready,
+    Loading,
+    Failed(String),
+}
+
 /// A Home file operation waiting for the user's answer in a dialog.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 enum FileOp {
@@ -1268,6 +1279,8 @@ enum Quit {
     Restart,
 }
 
+// The quit guard, Home browsing state and recovery probe are desktop-only.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct Suite {
     view: View,
     entries: Vec<Entry>,
@@ -1288,6 +1301,20 @@ struct Suite {
     file_op: Option<FileOp>,
     /// Home shows OfficeCraft's own trash (items from places with no system trash).
     show_trash: bool,
+    /// Desktop: the newest listing request per folder (older answers are dropped).
+    listing_seq: std::collections::HashMap<String, u64>,
+    /// Whether the folder shown has been read yet, or could not be.
+    listing_state: Listing,
+    /// The rename / new folder field has been focused once (it isn't grabbed back every frame).
+    file_op_focused: bool,
+    /// "Delete forever" asked for this OfficeCraft Trash item: waiting for the confirm.
+    #[cfg(not(target_arch = "wasm32"))]
+    purge_confirm: Option<files::OwnItem>,
+    /// Quit and discard was chosen: keep asking the window to close until it does.
+    leaving: bool,
+    /// Launch: a WordCraft session reading the recovery folder (see `poll_word_recovery`).
+    #[cfg(not(target_arch = "wasm32"))]
+    word_probe: Option<wordcraft_engine::Session>,
     /// The tab last scrolled into view in the tab strip.
     tab_in_view: Option<u64>,
     /// The tab strip is wider than the bar: show the ⋯ list of all tabs.
@@ -1396,7 +1423,7 @@ impl Suite {
             Some(_) if recent.is_empty() => (Some(0), Vec::new()),
             _ => (None, Vec::new()),
         };
-        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, tab_in_view: None, tabs_overflow: false, status: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
+        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, listing_seq: std::collections::HashMap::new(), listing_state: Listing::Ready, file_op_focused: false, #[cfg(not(target_arch = "wasm32"))] purge_confirm: None, leaving: false, #[cfg(not(target_arch = "wasm32"))] word_probe: None, tab_in_view: None, tabs_overflow: false, status: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite
     }
 
@@ -1409,7 +1436,9 @@ impl Suite {
             for f in self.folders.clone() {
                 self.request_listing(ctx, &f);
             }
-            if let Some(d) = self.cwd.clone() {
+            if let Some(d) = self.cwd.clone()
+                && !self.folders.contains(&d)
+            {
                 self.request_listing(ctx, &d);
             }
         }
@@ -1421,6 +1450,7 @@ impl Suite {
     }
 
     /// The folder Home shows: a subfolder being browsed, else the selected sidebar folder.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn shown_dir(&self) -> Option<String> {
         if self.folder_sel.is_none() {
             return None;
@@ -1430,13 +1460,21 @@ impl Suite {
 
     /// Lists `dir` on a worker thread; the rows arrive through `folder_scans`.
     #[cfg(not(target_arch = "wasm32"))]
-    fn request_listing(&self, ctx: &egui::Context, dir: &str) {
+    fn request_listing(&mut self, ctx: &egui::Context, dir: &str) {
+        let seq = {
+            let n = self.listing_seq.entry(dir.to_string()).or_insert(0);
+            *n += 1;
+            *n
+        };
         let scans = self.folder_scans.clone();
         let dir = dir.to_string();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let rows = list_level(&dir);
-            scans.lock().unwrap_or_else(|e| e.into_inner()).push(FolderScan { key: dir, rows, added: false });
+            let (rows, error) = match list_level(&dir) {
+                Ok(rows) => (rows, None),
+                Err(e) => (Vec::new(), Some(e)),
+            };
+            scans.lock().unwrap_or_else(|e| e.into_inner()).push(FolderScan { key: dir, rows, added: false, seq, error });
             ctx.request_repaint();
         });
     }
@@ -1449,6 +1487,9 @@ impl Suite {
         self.status = None;
         if let Some(d) = self.shown_dir() {
             self.folder_rows = folder_listing(&self.scans, &d);
+            if !self.scans.contains_key(&d) {
+                self.listing_state = Listing::Loading;
+            }
             self.request_listing(ctx, &d);
         }
     }
@@ -1458,7 +1499,17 @@ impl Suite {
     fn take_listings(&mut self) {
         let scanned = std::mem::take(&mut *self.folder_scans.lock().unwrap_or_else(|e| e.into_inner()));
         let shown = self.shown_dir();
-        for FolderScan { key, rows, .. } in scanned {
+        for FolderScan { key, rows, seq, error, .. } in scanned {
+            // A later request for this folder is out: this answer is stale (a file just moved).
+            if self.listing_seq.get(&key).is_some_and(|latest| seq < *latest) {
+                continue;
+            }
+            if shown.as_deref() == Some(key.as_str()) {
+                self.listing_state = match error {
+                    Some(e) => Listing::Failed(e),
+                    None => Listing::Ready,
+                };
+            }
             if let Some(i) = self.folders.iter().position(|f| *f == key) {
                 self.folder_counts.resize(self.folders.len(), 0);
                 self.folder_counts[i] = rows.len();
@@ -1493,7 +1544,7 @@ impl Suite {
         let id = self.next_id;
         self.next_id += 1;
         let n = self.entries.iter().filter(|e| e.kind == kind).count() + 1;
-        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), graph_for: None, pdf_client: None });
+        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), graph_for: None, pdf_client: None, seen_path: None });
         self.view = View::Tab(id);
         if !kind.tileable() {
             // The Graph and Equations tabs bring their own fonts and layout; they are never tiled.
@@ -2031,6 +2082,15 @@ impl Suite {
     }
 
     fn close(&mut self, id: u64) {
+        // DeckCraft forgets a presentation's recovery copy only when the document is closed, not
+        // when the session is dropped: close them, or a discarded deck comes back next launch.
+        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id)
+            && let Tab::Deck(a) = &mut e.tab
+        {
+            while !a.session.documents().is_empty() {
+                a.session.close_document(0);
+            }
+        }
         self.entries.retain(|e| e.id != id);
         self.confirm_close = None;
         self.prune_tiles();
@@ -2344,6 +2404,11 @@ impl Suite {
         let mut moved = Vec::new();
         for e in &mut self.entries {
             let Some(now) = e.tab.current_path() else { continue };
+            // Only a change the app made is worth resolving (resolving touches the disk).
+            if e.seen_path.as_deref() == Some(now.as_str()) {
+                continue;
+            }
+            e.seen_path = Some(now.clone());
             // A page has no paths, only names: retitle the tab, keep it out of Recent.
             if cfg!(target_arch = "wasm32") {
                 let name = file_name_of(&now);
@@ -2374,18 +2439,38 @@ impl Suite {
     /// itself; a Word tab offers WordCraft's on its recovery page.
     #[cfg(not(target_arch = "wasm32"))]
     fn reopen_recovered(&mut self) {
-        let mut deck = Tab::create(Kind::Deck);
-        if let Tab::Deck(a) = &mut deck
-            && let Ok(v) = a.session.execute("file.recovery.open", &serde_json::json!({}))
+        // DeckCraft opens what is unclaimed (another running instance keeps its own).
+        let mut session = deck_session(deckcraft_engine::Session::new());
+        if let Ok(v) = session.execute("file.recovery.open", &serde_json::json!({}))
             && let Some(n) = v.get("opened").and_then(|o| o.as_array()).map(Vec::len).filter(|n| *n > 0)
         {
-            a.set_status(format!("Recovered {n} unsaved presentation{} from the last session", if n == 1 { "" } else { "s" }));
-            self.push_tab(Kind::Deck, deck);
+            let mut app = deckcraft_ui_egui::SlideApp::new(session, deck_services());
+            app.set_status(format!("Recovered {n} unsaved presentation{} from the last session", if n == 1 { "" } else { "s" }));
+            self.push_tab(Kind::Deck, Tab::Deck(Box::new(app)));
         }
-        if let Some((dir, _)) = recovery_dir("word")
-            && word_recovery_waiting(&dir)
-        {
-            self.push_tab(Kind::Word, Tab::create(Kind::Word));
+        // WordCraft: a session reads its recovery folder on a worker; `poll_word_recovery` opens
+        // a Docs tab once it reports copies no other instance holds.
+        if let Some((dir, ctx)) = recovery_dir("word") {
+            let mut probe = wordcraft_engine::Session::new(wordcraft_doc::Document::new());
+            if probe.enable_recovery(dir, std::sync::Arc::new(move || ctx.request_repaint())).is_ok() {
+                self.word_probe = Some(probe);
+            }
+        }
+    }
+
+    /// Launch: once WordCraft's recovery folder is read, a Docs tab offers what it holds.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn poll_word_recovery(&mut self) {
+        let Some(probe) = &mut self.word_probe else { return };
+        probe.recovery_tick();
+        if probe.recovery_error().is_some() {
+            self.word_probe = None;
+        } else if probe.recovery_ready() {
+            let waiting = !probe.recovery_documents().is_empty();
+            self.word_probe = None;
+            if waiting {
+                self.push_tab(Kind::Word, Tab::create(Kind::Word));
+            }
         }
     }
 
@@ -2437,6 +2522,7 @@ impl Suite {
                 continue;
             }
             match files::move_into(std::path::Path::new(&src), std::path::Path::new(&dest)) {
+                Ok(new) if new.to_string_lossy() == src => {}
                 Ok(new) => {
                     let new = new.to_string_lossy().to_string();
                     self.retarget(&src, &new);
@@ -2459,7 +2545,8 @@ impl Suite {
     /// Open tabs whose file is `path` or inside it.
     #[cfg(not(target_arch = "wasm32"))]
     fn tabs_under(&self, path: &str) -> Vec<u64> {
-        self.entries.iter().filter(|e| e.path.as_deref().is_some_and(|p| std::path::Path::new(p).starts_with(path))).map(|e| e.id).collect()
+        let path = canonical_path(path);
+        self.entries.iter().filter(|e| e.path.as_deref().is_some_and(|p| std::path::Path::new(p).starts_with(&path))).map(|e| e.id).collect()
     }
 
     /// The name of an open tab inside `path` whose app can't be re-pointed at a new path.
@@ -2473,7 +2560,23 @@ impl Suite {
     /// folder that point at it (or inside it) follow.
     #[cfg(not(target_arch = "wasm32"))]
     fn retarget(&mut self, old: &str, new: &str) {
-        let swap = |p: &str| -> Option<String> { std::path::Path::new(p).strip_prefix(old).ok().map(|rel| std::path::Path::new(new).join(rel).to_string_lossy().trim_end_matches('/').to_string()) };
+        // `old` is gone now: resolve its folder (still there) to match the open tabs' spelling.
+        let resolved = |p: &str| -> String {
+            let path = std::path::Path::new(p);
+            match (path.parent(), path.file_name()) {
+                (Some(dir), Some(name)) => std::path::Path::new(&canonical_path(&dir.to_string_lossy())).join(name).to_string_lossy().to_string(),
+                _ => p.to_string(),
+            }
+        };
+        let (old_c, new_c) = (resolved(old), canonical_path(new));
+        if old_c != old {
+            self.retarget(&old_c, &new_c);
+        }
+        let swap = |p: &str| -> Option<String> {
+            let rel = std::path::Path::new(p).strip_prefix(old).ok()?;
+            // `join("")` would leave a trailing separator on the item itself.
+            Some(if rel.as_os_str().is_empty() { new.to_string() } else { std::path::Path::new(new).join(rel).to_string_lossy().to_string() })
+        };
         for e in &mut self.entries {
             if let Some(p) = e.path.clone()
                 && let Some(n) = swap(&p)
@@ -2509,11 +2612,14 @@ impl Suite {
     /// Moves `path` to the trash, after closing the tabs that have it open.
     #[cfg(not(target_arch = "wasm32"))]
     fn do_trash(&mut self, ctx: &egui::Context, path: &str) {
-        for id in self.tabs_under(path) {
-            self.close(id);
-        }
+        let open = self.tabs_under(path);
         match files::trash(std::path::Path::new(path)) {
             Ok(place) => {
+                // Only now that the file is safely in a trash: its tabs close (unsaved changes
+                // were confirmed away in the dialog).
+                for id in open {
+                    self.close(id);
+                }
                 let name = file_name_of(path);
                 self.notice = None;
                 self.status = Some(match place {
@@ -2547,9 +2653,7 @@ impl Suite {
     /// Lists the shown folder and the sidebar counts again after a change on disk.
     #[cfg(not(target_arch = "wasm32"))]
     fn refresh_home(&mut self, ctx: &egui::Context) {
-        if let Some(d) = self.shown_dir() {
-            self.request_listing(ctx, &d);
-        }
+        // `recount` lists the sidebar folders and the subfolder shown.
         self.recount(ctx);
     }
 
@@ -2570,8 +2674,9 @@ impl Suite {
             match op {
                 FileOp::Rename { name, error, .. } | FileOp::NewFolder { name, error, .. } => {
                     let edit = ui.add(egui::TextEdit::singleline(name).desired_width(320.0));
-                    if !edit.has_focus() && !edit.lost_focus() {
+                    if !self.file_op_focused {
                         edit.request_focus();
+                        self.file_op_focused = true;
                     }
                     if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         go = true;
@@ -2608,6 +2713,9 @@ impl Suite {
                 }
             });
         });
+        if go || done {
+            self.file_op_focused = false;
+        }
         if go {
             match self.file_op.take() {
                 Some(FileOp::Rename { path, name, .. }) => {
@@ -2684,10 +2792,32 @@ impl Suite {
             self.own_trash = files::own_trash_list();
         }
         if let Some(item) = purge {
-            if let Err(e) = files::purge(&item) {
-                self.notice = Some(e);
+            self.purge_confirm = Some(item);
+        }
+        if let Some(item) = self.purge_confirm.clone() {
+            let mut answer = None;
+            egui::Window::new("Delete forever?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ui.ctx(), |ui| {
+                *ui.visuals_mut() = home_visuals();
+                ui.label(format!("Delete {} for good? It can't be restored afterwards.", file_name_of(&item.original.to_string_lossy())));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(egui::RichText::new("Delete forever").color(egui::Color32::from_rgb(180, 40, 50))).clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if let Some(yes) = answer {
+                self.purge_confirm = None;
+                if yes {
+                    if let Err(e) = files::purge(&item) {
+                        self.notice = Some(e);
+                    }
+                    self.own_trash = files::own_trash_list();
+                }
             }
-            self.own_trash = files::own_trash_list();
         }
         if self.own_trash.is_empty() {
             self.show_trash = false;
@@ -2695,6 +2825,7 @@ impl Suite {
     }
 
     /// Tabs holding unsaved work: (id, name).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn dirty_names(&self) -> Vec<(u64, String)> {
         self.entries.iter().filter(|e| e.tab.is_dirty()).map(|e| (e.id, e.name.clone())).collect()
     }
@@ -2708,9 +2839,10 @@ impl Suite {
             return;
         }
         self.quit_ok = true;
-        if why == Quit::Restart {
+        if why == Quit::Restart && !self.leaving {
             updater::spawn_new_instance();
         }
+        self.leaving = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
@@ -2737,6 +2869,7 @@ impl Suite {
         let mut new_folder = false;
         // Sidebar folder i dragged to position j.
         let mut reorder: Option<(usize, usize)> = None;
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut open_trash = false;
 
         let mut want_grid = self.home_grid;
@@ -2824,7 +2957,9 @@ impl Suite {
                     let (resp, removed) = side_row(ui, self.folder_sel == Some(i), true, &name, self.folder_counts.get(i).copied(), true);
                     let resp = resp.on_hover_text(f);
                     // Drag a folder up or down the list to reorder it.
-                    resp.dnd_set_drag_payload(FolderDrag(i));
+                    if FILE_OPS {
+                        resp.dnd_set_drag_payload(FolderDrag(i));
+                    }
                     if let Some(from) = resp.dnd_hover_payload::<FolderDrag>()
                         && from.0 != i
                         && let Some(p) = ui.ctx().pointer_latest_pos()
@@ -2854,11 +2989,6 @@ impl Suite {
                         if FILE_OPS {
                             if ui.button("Show in file manager").clicked() {
                                 acts.reveal = Some(f.clone());
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button(egui::RichText::new("Move folder to Trash…").color(egui::Color32::from_rgb(180, 40, 50))).clicked() {
-                                acts.op = Some(FileOp::Trash { path: f.clone(), open: Vec::new(), is_dir: true });
                                 ui.close();
                             }
                         }
@@ -2963,7 +3093,7 @@ impl Suite {
                     if ui.add(open_btn).clicked() {
                         pick_files = true;
                     }
-                    if FILE_OPS && self.folder_sel.is_some() && !self.show_trash {
+                    if FILE_OPS && self.folder_sel.is_some() && !self.show_trash && matches!(self.listing_state, Listing::Ready) {
                         let nf = egui::Button::new(b("New folder", 14.0)).fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(10.0).min_size(egui::vec2(0.0, 40.0));
                         if ui.add(nf).on_hover_text("Make a folder here").clicked() {
                             new_folder = true;
@@ -3075,7 +3205,12 @@ impl Suite {
                 self.trash_list(ui);
             } else if rows.is_empty() {
                 ui.add_space(24.0);
-                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No folders or supported files here." } else { if cfg!(target_arch = "wasm32") { web_open_hint() } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
+                let empty = match (&self.listing_state, self.folder_sel.is_some()) {
+                    (Listing::Loading, true) => "Reading the folder…".to_string(),
+                    (Listing::Failed(e), true) => format!("Couldn't read this folder: {e}"),
+                    _ => "No folders or supported files here.".to_string(),
+                };
+                ui.label(egui::RichText::new(if self.folder_sel.is_some() { empty.as_str() } else { if cfg!(target_arch = "wasm32") { web_open_hint() } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
             } else if want_grid {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     let gap = 16.0;
@@ -3194,6 +3329,9 @@ impl Suite {
             // Files may have changed since the folder was added: list it again in the background.
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(d) = self.shown_dir() {
+                if !self.scans.contains_key(&d) {
+                    self.listing_state = Listing::Loading;
+                }
                 self.request_listing(&ctx, &d);
             }
             #[cfg(target_arch = "wasm32")]
@@ -3213,7 +3351,7 @@ impl Suite {
         }
         #[cfg(not(target_arch = "wasm32"))]
         if add_folder && let Some(dir) = rfd::FileDialog::new().pick_folder() {
-            let dir = dir.to_string_lossy().to_string();
+            let dir = canonical_path(&dir.to_string_lossy());
             if !self.folders.contains(&dir) {
                 self.folders.push(dir.clone());
                 save_folders(&self.folders);
@@ -3566,7 +3704,7 @@ impl eframe::App for Suite {
                 self.open_bytes(ctx, name, bytes);
             }
             let scanned = std::mem::take(&mut *self.folder_scans.lock().unwrap_or_else(|e| e.into_inner()));
-            for FolderScan { key, rows, added } in scanned {
+            for FolderScan { key, rows, added, .. } in scanned {
                 let i = match self.folders.iter().position(|f| *f == key) {
                     Some(i) => i,
                     None => {
@@ -3596,12 +3734,10 @@ impl eframe::App for Suite {
             let focused = ctx.input(|i| i.focused);
             if focused && !self.focused && self.view == View::Home {
                 self.recount(ctx);
-                if let Some(d) = self.shown_dir() {
-                    self.request_listing(ctx, &d);
-                }
             }
             self.focused = focused;
             self.take_listings();
+            self.poll_word_recovery();
         }
         if self.restore_home && self.pending.is_empty() {
             self.view = View::Home;
@@ -3753,6 +3889,7 @@ impl eframe::App for Suite {
                 ui.painter().text(hr.center(), egui::Align2::CENTER_CENTER, "Home", hf, hc);
                 if hresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     select = Some(View::Home);
+                    self.show_trash = false;
                 }
                 bar_rect = ui.max_rect();
                 // Many tabs: the strip scrolls (mouse wheel) and keeps the active tab in view; the
@@ -3874,6 +4011,13 @@ impl eframe::App for Suite {
         #[cfg(not(target_arch = "wasm32"))]
         if self.updater.ui(ui.ctx()) {
             self.leave(ui.ctx(), Quit::Restart);
+        }
+        // Leaving was decided: keep asking until the window closes (a close the desktop sent
+        // in the same frame may have been cancelled).
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.leaving {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            ui.ctx().request_repaint();
         }
         // The window's close button (or the desktop closing it): ask first when work is unsaved.
         #[cfg(not(target_arch = "wasm32"))]
@@ -4112,8 +4256,12 @@ impl eframe::App for Suite {
             }
         }
         match self.view {
-            View::Home => self.home(ui),
+            View::Home => {
+                self.settle = self.settle.saturating_sub(1);
+                self.home(ui)
+            }
             View::Tab(_) if self.tiled_ids().is_some() => {
+                self.settle = self.settle.saturating_sub(1);
                 let ids = self.tiled_ids().unwrap_or_default();
                 self.tile_ui(ui, frame, &ids);
             }

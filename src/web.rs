@@ -365,7 +365,7 @@ fn add_folder_from_input(scans: crate::FolderScans) -> Result<(), String> {
         rows.sort_by(|a, b| b.modified.cmp(&a.modified));
         rows.truncate(500);
         DIRFILES.with(|m| m.borrow_mut().insert(root.clone(), by_rel));
-        scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key: root, rows, added: true });
+        scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key: root, rows, added: true, seq: 0, error: None });
         repaint();
     });
     call(&input, "addEventListener", &[Js::from_str("change"), on_change])?;
@@ -469,7 +469,7 @@ pub fn add_folder(scans: crate::FolderScans) {
         .await;
         match result {
             Ok(Some((key, rows))) => {
-                scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key, rows, added: true });
+                scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key, rows, added: true, seq: 0, error: None });
                 repaint();
             }
             Ok(None) => {}
@@ -485,7 +485,7 @@ pub fn rescan_folder(key: &str, scans: crate::FolderScans) {
     wasm_bindgen_futures::spawn_local(async move {
         match scan_dir(&handle, &key).await {
             Ok(rows) => {
-                scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key, rows, added: false });
+                scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key, rows, added: false, seq: 0, error: None });
                 repaint();
             }
             Err(e) => log::error!("couldn't list {key}: {e}"),

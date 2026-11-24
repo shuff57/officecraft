@@ -41,6 +41,14 @@ pub fn check_name(name: &str) -> Result<&str, String> {
     if name == "." || name == ".." || name.contains('/') || name.contains('\\') || name.contains('\0') {
         return Err("A name can't contain / or \\, or be . or ..".into());
     }
+    // Home hides names starting with a dot: the item would vanish from the list.
+    if name.starts_with('.') {
+        return Err("A name can't start with a dot (it would be hidden).".into());
+    }
+    #[cfg(windows)]
+    if name.contains(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) || name.ends_with('.') {
+        return Err("A name can't contain : * ? \" < > | or end with a dot.".into());
+    }
     Ok(name)
 }
 
@@ -85,23 +93,56 @@ pub fn move_into(src: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     if dest.exists() {
         return Err(format!("{} already exists in {}.", name.to_string_lossy(), dest_dir.display()));
     }
-    relocate(src, &dest)?;
+    relocate(src, &dest).map_err(MoveError::message)?;
     Ok(dest)
 }
 
-/// `fs::rename`, or copy and delete when `src` and `dest` are on different file systems.
-fn relocate(src: &Path, dest: &Path) -> Result<(), String> {
-    match std::fs::rename(src, dest) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            copy_all(src, dest).map_err(|e| format!("copy to {}: {e}", dest.display()))?;
-            if src.is_dir() { std::fs::remove_dir_all(src) } else { std::fs::remove_file(src) }.map_err(|e| format!("{} was copied but not removed: {e}", src.display()))
+/// Why a move failed: before anything changed, or after `dest` got a full copy but `src` could
+/// not all be removed (both now exist, at least in part).
+#[derive(Debug)]
+enum MoveError {
+    Failed(String),
+    Copied(String),
+}
+
+impl MoveError {
+    fn message(self) -> String {
+        match self {
+            MoveError::Failed(e) | MoveError::Copied(e) => e,
         }
     }
 }
 
+/// `fs::rename`, or copy and delete when `src` and `dest` are on different file systems. Any
+/// other rename error (permissions, a busy or locked file) is reported, not copied around.
+fn relocate(src: &Path, dest: &Path) -> Result<(), MoveError> {
+    match std::fs::rename(src, dest) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            if let Err(e) = copy_all(src, dest) {
+                // Leave no half copy behind: the original is untouched.
+                let _ = if dest.is_dir() { std::fs::remove_dir_all(dest) } else { std::fs::remove_file(dest) };
+                return Err(MoveError::Failed(format!("copy to {}: {e}", dest.display())));
+            }
+            if src.is_dir() { std::fs::remove_dir_all(src) } else { std::fs::remove_file(src) }
+                .map_err(|e| MoveError::Copied(format!("{} was copied but not all of it could be removed: {e}", src.display())))
+        }
+        Err(e) => Err(MoveError::Failed(e.to_string())),
+    }
+}
+
+/// Copies a file or folder; symbolic links are copied as links, never followed (a link loop
+/// would recurse forever).
 fn copy_all(src: &Path, dest: &Path) -> std::io::Result<()> {
-    if src.is_dir() {
+    let meta = std::fs::symlink_metadata(src)?;
+    if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(src)?;
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, dest);
+        #[cfg(not(unix))]
+        return Err(std::io::Error::other(format!("can't copy the link {} ({})", src.display(), target.display())));
+    }
+    if meta.is_dir() {
         std::fs::create_dir(dest)?;
         for e in std::fs::read_dir(src)?.flatten() {
             copy_all(&e.path(), &dest.join(e.file_name()))?;
@@ -123,10 +164,23 @@ pub enum Trashed {
 
 /// Moves `path` (a file or a whole folder) to the trash.
 pub fn trash(path: &Path) -> Result<Trashed, String> {
+    // Windows deletes a network-share item for good, silently, when asked to recycle it: those
+    // go to OfficeCraft's trash instead.
+    #[cfg(windows)]
+    if path.to_string_lossy().starts_with(r"\\") {
+        let root = own_trash_root().ok_or("no data directory")?;
+        return to_own_trash(&root, path).map(|_| Trashed::Own);
+    }
     match ::trash::delete(path) {
         Ok(()) => Ok(Trashed::System),
         Err(sys) => {
             let root = own_trash_root().ok_or_else(|| format!("no trash for this location ({sys})"))?;
+            // A folder holding OfficeCraft's own trash can't go into it (it would copy into itself).
+            if let (Ok(r), Ok(p)) = (dunce::canonicalize(root.parent().unwrap_or(&root)), dunce::canonicalize(path))
+                && r.starts_with(&p)
+            {
+                return Err(format!("{} holds OfficeCraft's own data, so it can't go to OfficeCraft Trash ({sys})", path.display()));
+            }
             to_own_trash(&root, path).map(|_| Trashed::Own).map_err(|e| format!("system trash: {sys}; OfficeCraft trash: {e}"))
         }
     }
@@ -165,11 +219,15 @@ fn to_own_trash(root: &Path, path: &Path) -> Result<PathBuf, String> {
     // The note first: an item without one could not be put back.
     std::fs::write(info.join(format!("{key}.json")), note.to_string()).map_err(|e| e.to_string())?;
     let dest = files.join(&key);
-    if let Err(e) = relocate(path, &dest) {
-        let _ = std::fs::remove_file(info.join(format!("{key}.json")));
-        return Err(e);
+    match relocate(path, &dest) {
+        Ok(()) => Ok(dest),
+        // A full copy is in the trash: keep its note so it is listed (and can be restored).
+        Err(MoveError::Copied(e)) => Err(format!("{e}. A full copy is in OfficeCraft Trash.")),
+        Err(MoveError::Failed(e)) => {
+            let _ = std::fs::remove_file(info.join(format!("{key}.json")));
+            Err(e)
+        }
     }
-    Ok(dest)
 }
 
 /// What is in OfficeCraft's own trash, most recently deleted first.
@@ -196,10 +254,14 @@ pub fn restore(item: &OwnItem) -> Result<PathBuf, String> {
     if item.original.exists() {
         return Err(format!("{} already exists; move it away first.", item.original.display()));
     }
-    if let Some(parent) = item.original.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    // The folder it came from must still be there: on an unmounted share, recreating it would
+    // put the file on the local disk under the mount point, hidden once the share is back.
+    if let Some(parent) = item.original.parent()
+        && !parent.is_dir()
+    {
+        return Err(format!("{} isn't there (is the drive or share connected?).", parent.display()));
     }
-    relocate(&root.join("files").join(&item.key), &item.original)?;
+    relocate(&root.join("files").join(&item.key), &item.original).map_err(MoveError::message)?;
     let _ = std::fs::remove_file(root.join("info").join(format!("{}.json", item.key)));
     Ok(item.original.clone())
 }
@@ -246,6 +308,7 @@ mod tests {
         assert!(rename(&d.join("a.docx"), "../a.docx").is_err());
         assert_eq!(rename(&d.join("a.docx"), "c.docx").unwrap(), d.join("c.docx"));
         assert!(new_folder(&d, "").is_err());
+        assert!(rename(&d.join("c.docx"), ".hidden.docx").is_err());
         assert!(new_folder(&d, "Sub").unwrap().is_dir());
         assert!(new_folder(&d, "Sub").is_err());
     }

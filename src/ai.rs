@@ -171,6 +171,22 @@ pub struct Settings {
     probe: std::sync::Arc<std::sync::Mutex<Probe>>,
     /// OpenRouter: list only the `:free` models (what a free account can use).
     free_only: bool,
+    /// The host the custom endpoint's key was entered for: the key is cleared when the endpoint
+    /// moves to another host, so it never goes somewhere it wasn't meant for.
+    key_host: String,
+}
+
+/// The host (and port) of an endpoint URL, lowercased: `https://API.x.com:8443/v1` → `api.x.com:8443`.
+fn url_host(url: &str) -> String {
+    let rest = url.trim().split_once("://").map(|(_, r)| r).unwrap_or(url.trim());
+    rest.split(['/', '?', '#']).next().unwrap_or("").to_ascii_lowercase()
+}
+
+/// Plain http to another machine: the key and documents cross the network unencrypted.
+fn insecure_remote(url: &str) -> bool {
+    let host = url_host(url);
+    let name = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(&host);
+    url.trim().to_ascii_lowercase().starts_with("http://") && !matches!(name, "localhost" | "127.0.0.1" | "[::1]")
 }
 
 /// What the Settings window knows about the endpoint's models.
@@ -186,7 +202,7 @@ struct Probe {
 
 impl Settings {
     pub fn new(cfg: &Config) -> Settings {
-        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default(), probe: Default::default(), free_only: true }
+        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default(), probe: Default::default(), free_only: true, key_host: url_host(&cfg.local_url) }
     }
 
     /// `Some(Some(cfg))`: saved; `Some(None)`: closed without saving; `None`: still open.
@@ -224,8 +240,12 @@ impl Settings {
                                     // never send one service's key to another.
                                     d.models[0].clear();
                                     d.keys[0].clear();
-                                    *self.test.lock().unwrap() = None;
-                                    *self.probe.lock().unwrap() = Probe::default();
+                                    self.key_host = url_host(url);
+                                    // A test still running belongs to the old service (and its key):
+                                    // stop it and let its answers land somewhere no one reads.
+                                    self.probe.lock().unwrap().stop = true;
+                                    self.probe = Default::default();
+                                    self.test = Default::default();
                                 }
                             }
                         });
@@ -233,6 +253,19 @@ impl Settings {
                         ui.label("Endpoint");
                         ui.add(egui::TextEdit::singleline(&mut d.local_url).hint_text(DEFAULT_BASE).desired_width(300.0));
                         ui.end_row();
+                        let host = url_host(&d.local_url);
+                        if host != self.key_host {
+                            if !d.keys[0].is_empty() {
+                                d.keys[0].clear();
+                                self.saved_note = "The endpoint moved to another host, so its API key was cleared.".into();
+                            }
+                            self.key_host = host;
+                        }
+                        if insecure_remote(&d.local_url) {
+                            ui.label("");
+                            ui.colored_label(egui::Color32::from_rgb(180, 110, 0), "Plain http to another machine: the key and your documents travel unencrypted.");
+                            ui.end_row();
+                        }
                         ui.label("API key");
                         ui.horizontal(|ui| {
                             ui.add(egui::TextEdit::singleline(&mut d.keys[0]).password(!self.reveal).hint_text("none for a local server").desired_width(260.0));
@@ -312,7 +345,16 @@ impl Settings {
             self.model_list(ui);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button(egui::RichText::new("Save").strong()).clicked() {
+                // A hosted service has no default model here: guessing one would fail at the
+                // first message.
+                let needs_model = self.draft.provider == Provider::Local
+                    && self.draft.models[0].trim().is_empty()
+                    && !self.draft.local_url.trim().is_empty()
+                    && self.draft.local_url.trim_end_matches('/') != DEFAULT_BASE;
+                let save = ui.button(egui::RichText::new("Save").strong()).clicked();
+                if save && needs_model {
+                    self.saved_note = "Choose a model first: Test connection lists this service's models.".into();
+                } else if save {
                     let mut cfg = self.draft.clone();
                     cfg.apply();
                     match cfg.save() {
@@ -2358,5 +2400,19 @@ mod tests {
         c.set_model("gpt-oss:20b");
         assert_eq!((c.base_url.as_str(), c.model.as_str(), c.key.as_deref()), ("https://ollama.com/v1", "gpt-oss:20b", Some("cloud-secret")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::{insecure_remote, url_host};
+
+    #[test]
+    fn hosts_and_plain_http() {
+        assert_eq!(url_host("https://API.DeepSeek.com/v1"), "api.deepseek.com");
+        assert_eq!(url_host("http://nas.local:8317/v1"), "nas.local:8317");
+        assert!(insecure_remote("http://nas.local:8317/v1"));
+        assert!(!insecure_remote("http://127.0.0.1:11434/v1"));
+        assert!(!insecure_remote("https://api.groq.com/openai/v1"));
     }
 }

@@ -47,6 +47,8 @@ eframe = { version = "0.36", default-features = false, features = ["wayland", "x
 ureq = "3"
 # Move to Trash on Home (freedesktop trash, Recycle Bin, macOS Trash).
 trash = "5"
+# Canonical paths without Windows' `\\?\` prefix, so they compare with the ones Home lists.
+dunce = "1"
 # The formatted (HTML) clipboard the apps share; data-control so KDE/wlroots Wayland gets it natively.
 arboard = { version = "3.6", features = ["wayland-data-control"] }
 
