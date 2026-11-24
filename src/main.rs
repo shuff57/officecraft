@@ -19,6 +19,8 @@ mod platform;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
 #[cfg(not(target_arch = "wasm32"))]
+mod clip;
+#[cfg(not(target_arch = "wasm32"))]
 mod files;
 #[cfg(target_arch = "wasm32")]
 mod host;
@@ -119,6 +121,10 @@ fn word_services() -> wordcraft_ui_egui::Services {
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
+        // Formatted copy and paste across the tabs (a Sheets range pastes as a table).
+        clipboard_text: Some(Box::new(clip::text)),
+        clipboard_html: Some(Box::new(clip::html)),
+        set_clipboard_html: Some(Box::new(clip::set_html)),
         ..Default::default()
     }
 }
@@ -141,6 +147,8 @@ fn grid_services() -> gridcraft_ui_egui::Services {
                 .save_file()
                 .and_then(|p| p.to_str().map(str::to_string))
         })),
+        copy_html: Some(Box::new(|html: &str, text: &str| if clip::set_html(html, text) { Ok(()) } else { Err("no HTML clipboard".into()) })),
+        paste_html: Some(Box::new(clip::html)),
         ..Default::default()
     }
 }
@@ -157,6 +165,8 @@ fn deck_services() -> deckcraft_ui_egui::Services {
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
+        clipboard_html: Some(Box::new(clip::html)),
+        clipboard_set_html: Some(Box::new(clip::set_html)),
         ..Default::default()
     }
 }
