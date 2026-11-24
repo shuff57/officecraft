@@ -18,6 +18,8 @@ mod graphpic;
 mod platform;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
+#[cfg(not(target_arch = "wasm32"))]
+mod files;
 #[cfg(target_arch = "wasm32")]
 mod host;
 #[cfg(target_arch = "wasm32")]
@@ -353,6 +355,21 @@ impl Tab {
         }
     }
 
+    /// Points the app at `path` after its file was renamed or moved on Home, so the next Save
+    /// writes there. `false`: this app can't be re-pointed (close the tab first).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn set_path(&mut self, path: &str) -> bool {
+        match self {
+            Tab::Word(a) => {
+                a.session.path = Some(std::path::PathBuf::from(path));
+                true
+            }
+            Tab::Grid(a) => a.session.active_mut().map(|d| d.path = Some(path.to_string())).is_some(),
+            Tab::Deck(a) => a.session.active_mut().map(|d| d.path = Some(path.to_string())).is_some(),
+            _ => false,
+        }
+    }
+
     /// The apps share one egui context and each installs its own fonts and visuals into it.
     /// After another app has drawn, this one must install them again.
     fn context_changed(&mut self, ctx: &egui::Context) {
@@ -653,6 +670,8 @@ struct Row {
     kind: Option<Kind>,
     modified: Option<std::time::SystemTime>,
     size: u64,
+    /// A subfolder (desktop folder browsing): clicking it goes in.
+    is_dir: bool,
 }
 
 fn row_for(path: &str) -> Row {
@@ -664,7 +683,8 @@ fn row_for(path: &str) -> Row {
         folder: p.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
         kind: kind_for(path),
         modified: meta.as_ref().and_then(|m| m.modified().ok()),
-        size: meta.map(|m| m.len()).unwrap_or(0),
+        size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+        is_dir: meta.is_some_and(|m| m.is_dir()),
     }
 }
 
@@ -684,31 +704,13 @@ fn file_name_of(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string())
 }
 
-/// Supported files in `dir` and the folders two levels below it, newest first.
-fn list_folder(dir: &str) -> Vec<Row> {
-    let mut rows: Vec<Row> = Vec::new();
-    let mut stack = vec![(std::path::PathBuf::from(dir), 0u8)];
-    while let Some((d, depth)) = stack.pop() {
-        let Ok(read) = std::fs::read_dir(&d) else { continue };
-        for e in read.flatten() {
-            let path = e.path();
-            let hidden = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
-            let Ok(ft) = e.file_type() else { continue };
-            if hidden {
-                continue;
-            }
-            if ft.is_dir() && depth < 2 {
-                stack.push((path, depth + 1));
-            } else if ft.is_file()
-                && let Some(p) = path.to_str().filter(|p| kind_for(p).is_some())
-            {
-                rows.push(row_for(p));
-            }
-        }
-    }
-    rows.sort_by(|a, b| b.modified.cmp(&a.modified));
-    rows.truncate(500);
-    rows
+/// One level of folder `dir` (desktop): its subfolders, then the files a Craft app opens,
+/// newest first. Read on a worker thread: a NAS or network folder can be slow.
+#[cfg(not(target_arch = "wasm32"))]
+fn list_level(dir: &str) -> Vec<Row> {
+    files::list_dir(std::path::Path::new(dir), |p| kind_for(p).is_some())
+        .map(|v| v.into_iter().filter_map(|p| p.to_str().map(row_for)).collect())
+        .unwrap_or_default()
 }
 
 /// Folders the visitor added. A page can't reopen a folder without a fresh pick, so the browser
@@ -727,17 +729,9 @@ fn save_folders(list: &[String]) {
     platform::write_lines("folders.txt", list);
 }
 
-/// The rows of folder `dir`: read from disk natively, the browser's last listing in a page.
+/// The last listing of folder `dir` held for Home (fresh ones arrive through `folder_scans`).
 fn folder_listing(scans: &std::collections::HashMap<String, Vec<Row>>, dir: &str) -> Vec<Row> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        scans.get(dir).cloned().unwrap_or_default()
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = scans;
-        list_folder(dir)
-    }
+    scans.get(dir).cloned().unwrap_or_default()
 }
 
 fn kind_color(kind: Option<Kind>) -> egui::Color32 {
@@ -911,6 +905,14 @@ fn paint_folder(p: &egui::Painter, c: egui::Pos2, col: egui::Color32) {
     p.line_segment([r.left_top() + egui::vec2(1.0, -2.0), r.left_top() + egui::vec2(5.5, -2.0)], st);
 }
 
+/// The folder picture on a Home card.
+fn paint_folder_big(p: &egui::Painter, c: egui::Pos2, col: egui::Color32) {
+    let body = egui::Rect::from_center_size(c + egui::vec2(0.0, 4.0), egui::vec2(54.0, 38.0));
+    let tab = egui::Rect::from_min_size(body.left_top() + egui::vec2(0.0, -7.0), egui::vec2(22.0, 9.0));
+    p.rect_filled(tab, 3.0, col.gamma_multiply(0.55));
+    p.rect_filled(body, 5.0, col.gamma_multiply(0.75));
+}
+
 fn paint_search(p: &egui::Painter, c: egui::Pos2, col: egui::Color32) {
     let st = egui::Stroke::new(1.6, col);
     p.circle_stroke(c + egui::vec2(-1.5, -1.5), 5.0, st);
@@ -919,7 +921,9 @@ fn paint_search(p: &egui::Painter, c: egui::Pos2, col: egui::Color32) {
 
 /// One sidebar row: optional folder icon, label, count on the right (or a remove cross on hover).
 fn side_row(ui: &mut egui::Ui, selected: bool, icon: bool, label: &str, count: Option<usize>, removable: bool) -> (egui::Response, bool) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
+    // Draggable too: sidebar folders reorder by dragging (a click still selects).
+    let sense = if removable { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), sense);
     let hovered = resp.hovered();
     let p = ui.painter();
     if selected {
@@ -936,15 +940,133 @@ fn side_row(ui: &mut egui::Ui, selected: bool, icon: bool, label: &str, count: O
     let font = if selected { egui::FontId::new(14.0, bold()) } else { egui::FontId::proportional(14.0) };
     p.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, label, font, ink);
     let mut removed = false;
+    let mut over_x = false;
     if removable && hovered {
         let xr = egui::Rect::from_center_size(egui::pos2(rect.right() - 18.0, rect.center().y), egui::vec2(20.0, 20.0));
         p.text(xr.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(17.0), MUTED);
         removed = resp.clicked() && resp.interact_pointer_pos().is_some_and(|q| xr.expand(6.0).contains(q));
+        over_x = resp.hover_pos().is_some_and(|q| xr.expand(6.0).contains(q));
     } else if let Some(n) = count {
         let col = if selected { ACCENT } else { MUTED };
         p.text(egui::pos2(rect.right() - 12.0, rect.center().y), egui::Align2::RIGHT_CENTER, n.to_string(), egui::FontId::proportional(13.0), col);
     }
-    (resp.on_hover_cursor(egui::CursorIcon::PointingHand), removed)
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    // The × only takes the folder off the sidebar; say so, since it looks like a delete.
+    let resp = if over_x { resp.on_hover_text("Remove from sidebar. The folder and its files stay on disk.") } else { resp };
+    (resp, removed)
+}
+
+/// What the Home rows asked for this frame, applied once drawing is done.
+#[derive(Default)]
+struct HomeActions {
+    open: Option<String>,
+    /// Go into this folder (desktop browsing).
+    enter: Option<String>,
+    op: Option<FileOp>,
+    /// (item, folder): move the item into the folder.
+    moves: Vec<(String, String)>,
+    reveal: Option<String>,
+    forget_recent: Option<String>,
+}
+
+/// Whether Home can change files on disk (rename, trash, move): the desktop build.
+const FILE_OPS: bool = cfg!(not(target_arch = "wasm32"));
+
+/// A Home row's clicks, right-click menu and drag: a click opens a file or goes into a folder; a
+/// row can be dragged onto a folder (a folder row, the path above the list, a sidebar folder) to
+/// move it there. `in_recent`: the row is in the Recent list, which can forget it.
+fn row_interact(resp: &egui::Response, r: &Row, in_recent: bool, acts: &mut HomeActions) {
+    if resp.clicked() {
+        if r.is_dir {
+            acts.enter = Some(r.path.clone());
+        } else {
+            acts.open = Some(r.path.clone());
+        }
+    }
+    if FILE_OPS {
+        resp.dnd_set_drag_payload(MovePayload(r.path.clone()));
+        if r.is_dir
+            && let Some(p) = dropped::<MovePayload>(&resp)
+            && p.0 != r.path
+        {
+            acts.moves.push((p.0.clone(), r.path.clone()));
+        }
+    }
+    resp.context_menu(|ui| {
+        menu_visuals(ui);
+        if ui.button(if r.is_dir { "Open folder" } else { "Open" }).clicked() {
+            if r.is_dir {
+                acts.enter = Some(r.path.clone());
+            } else {
+                acts.open = Some(r.path.clone());
+            }
+            ui.close();
+        }
+        if FILE_OPS {
+            if ui.button("Rename…").clicked() {
+                acts.op = Some(FileOp::Rename { path: r.path.clone(), name: r.name.clone(), error: None });
+                ui.close();
+            }
+            if ui.button("Show in file manager").clicked() {
+                acts.reveal = Some(r.path.clone());
+                ui.close();
+            }
+        }
+        if ui.button("Copy path").clicked() {
+            ui.ctx().copy_text(r.path.clone());
+            ui.close();
+        }
+        if in_recent && ui.button("Remove from Recent").on_hover_text("The file stays where it is").clicked() {
+            acts.forget_recent = Some(r.path.clone());
+            ui.close();
+        }
+        if FILE_OPS {
+            ui.separator();
+            if ui.button(egui::RichText::new("Move to Trash").color(egui::Color32::from_rgb(180, 40, 50))).clicked() {
+                acts.op = Some(FileOp::Trash { path: r.path.clone(), open: Vec::new(), is_dir: r.is_dir });
+                ui.close();
+            }
+        }
+    });
+}
+
+/// Opens the system file manager at `path` (its folder, for a file).
+#[cfg(not(target_arch = "wasm32"))]
+fn reveal_in_file_manager(path: &str) {
+    let p = std::path::Path::new(path);
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg("-R").arg(p).spawn();
+    #[cfg(target_os = "windows")]
+    let r = std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let r = std::process::Command::new("xdg-open").arg(if p.is_dir() { p } else { p.parent().unwrap_or(p) }).spawn();
+    if let Err(e) = r {
+        log::warn!("file manager: {e}");
+    }
+}
+
+/// Home's look for a right-click menu: plain rows that light up on hover, no boxes.
+fn menu_visuals(ui: &mut egui::Ui) {
+    *ui.visuals_mut() = home_visuals();
+    let w = &mut ui.visuals_mut().widgets;
+    w.inactive.bg_stroke = egui::Stroke::NONE;
+    w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+    w.hovered.bg_stroke = egui::Stroke::NONE;
+    w.hovered.weak_bg_fill = SEL_BG;
+    ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+}
+
+/// What was dropped on `resp` this frame, if it is a `P`. egui's own `dnd_release_payload` takes
+/// the payload before checking its type, so asking for the wrong type would lose the drag.
+fn dropped<P: std::any::Any + Send + Sync>(resp: &egui::Response) -> Option<std::sync::Arc<P>> {
+    if egui::DragAndDrop::has_payload_of_type::<P>(&resp.ctx) { resp.dnd_release_payload::<P>() } else { None }
+}
+
+/// A drop target highlight: a teal outline while a dragged row is held over `rect`.
+fn paint_drop_hint(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect) {
+    if resp.dnd_hover_payload::<MovePayload>().is_some() {
+        ui.painter().rect_stroke(rect, 8.0, egui::Stroke::new(2.0, ACCENT), egui::StrokeKind::Inside);
+    }
 }
 
 /// A segment in the white filter bar: dark fill when selected.
@@ -1086,6 +1208,23 @@ fn save_session(lines: &[String]) {
     platform::write_lines("session.txt", lines);
 }
 
+/// A Home file operation waiting for the user's answer in a dialog.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+enum FileOp {
+    Rename { path: String, name: String, error: Option<String> },
+    NewFolder { dir: String, name: String, error: Option<String> },
+    /// Move to Trash, confirmed first when the item is a folder or open in a tab.
+    Trash { path: String, open: Vec<u64>, is_dir: bool },
+}
+
+/// A Home row being dragged onto a folder to move it there.
+#[derive(Clone)]
+struct MovePayload(String);
+
+/// A sidebar folder being dragged to another place in the list (its index).
+#[derive(Clone, Copy)]
+struct FolderDrag(usize);
+
 /// Why the window is about to close.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1109,6 +1248,21 @@ struct Suite {
     confirm_quit: Option<Quit>,
     /// The user chose to leave and discard: the next close request goes through.
     quit_ok: bool,
+    /// Desktop: the folder shown on Home, inside the selected sidebar folder (`None`: its top).
+    cwd: Option<String>,
+    /// A rename, new folder or trash waiting in its dialog.
+    file_op: Option<FileOp>,
+    /// Home shows OfficeCraft's own trash (items from places with no system trash).
+    show_trash: bool,
+    /// The last Home file operation that went through ("Moved … to the Trash"), shown in teal.
+    status: Option<String>,
+    /// The window had keyboard focus last frame (desktop: refresh Home when it comes back).
+    focused: bool,
+    /// Recent paths and their rows, read again only when the list changes.
+    recent_rows: (Vec<String>, Vec<Row>),
+    /// What is in OfficeCraft's own trash (desktop), refreshed after each trash operation.
+    #[cfg(not(target_arch = "wasm32"))]
+    own_trash: Vec<files::OwnItem>,
     ai_cfg: ai::Config,
     ai_settings: Option<ai::Settings>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -1199,17 +1353,83 @@ impl Suite {
             folders.push(d.to_string_lossy().to_string());
         }
         let recent = load_recent();
+        // The folder's rows arrive from a worker on the first frames (`recount`).
         let (folder_sel, folder_rows) = match folders.first() {
-            Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
+            Some(_) if recent.is_empty() => (Some(0), Vec::new()),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
-        suite.recount();
+        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, status: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite
     }
 
-    fn recount(&mut self) {
-        self.folder_counts = self.folders.iter().map(|f| folder_listing(&self.scans, f).len()).collect();
+    /// Sidebar counts and the shown folder: read again in the background (desktop), or from the
+    /// browser's last listings (page).
+    fn recount(&mut self, ctx: &egui::Context) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.folder_counts.resize(self.folders.len(), 0);
+            for f in self.folders.clone() {
+                self.request_listing(ctx, &f);
+            }
+            if let Some(d) = self.cwd.clone() {
+                self.request_listing(ctx, &d);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ctx;
+            self.folder_counts = self.folders.iter().map(|f| folder_listing(&self.scans, f).len()).collect();
+        }
+    }
+
+    /// The folder Home shows: a subfolder being browsed, else the selected sidebar folder.
+    fn shown_dir(&self) -> Option<String> {
+        if self.folder_sel.is_none() {
+            return None;
+        }
+        self.cwd.clone().or_else(|| self.folder_sel.and_then(|i| self.folders.get(i).cloned()))
+    }
+
+    /// Lists `dir` on a worker thread; the rows arrive through `folder_scans`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn request_listing(&self, ctx: &egui::Context, dir: &str) {
+        let scans = self.folder_scans.clone();
+        let dir = dir.to_string();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let rows = list_level(&dir);
+            scans.lock().unwrap_or_else(|e| e.into_inner()).push(FolderScan { key: dir, rows, added: false });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Shows `dir` (`None`: the top of the selected sidebar folder) and lists it again.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn browse(&mut self, ctx: &egui::Context, dir: Option<String>) {
+        let top = self.folder_sel.and_then(|i| self.folders.get(i).cloned());
+        self.cwd = dir.filter(|d| Some(d) != top.as_ref());
+        self.status = None;
+        if let Some(d) = self.shown_dir() {
+            self.folder_rows = folder_listing(&self.scans, &d);
+            self.request_listing(ctx, &d);
+        }
+    }
+
+    /// Takes in folder listings the workers (desktop) delivered.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn take_listings(&mut self) {
+        let scanned = std::mem::take(&mut *self.folder_scans.lock().unwrap_or_else(|e| e.into_inner()));
+        let shown = self.shown_dir();
+        for FolderScan { key, rows, .. } in scanned {
+            if let Some(i) = self.folders.iter().position(|f| *f == key) {
+                self.folder_counts.resize(self.folders.len(), 0);
+                self.folder_counts[i] = rows.len();
+            }
+            if shown.as_deref() == Some(key.as_str()) {
+                self.folder_rows = rows.clone();
+            }
+            self.scans.insert(key, rows);
+        }
     }
 
     /// Starts a fresh, empty instance of `kind` and shows it.
@@ -2131,6 +2351,311 @@ impl Suite {
         }
     }
 
+/// Applies what Home's rows, path and sidebar asked for this frame (desktop).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_home(&mut self, ctx: &egui::Context, acts: HomeActions, crumb_go: Option<Option<String>>, new_folder: bool, reorder: Option<(usize, usize)>, open_trash: bool) {
+        if let Some(dir) = crumb_go {
+            self.browse(ctx, dir);
+        }
+        if let Some(d) = acts.enter
+            && self.folder_sel.is_some()
+        {
+            self.browse(ctx, Some(d));
+        }
+        if new_folder && let Some(dir) = self.shown_dir() {
+            self.file_op = Some(FileOp::NewFolder { dir, name: "New folder".into(), error: None });
+        }
+        if let Some((from, to)) = reorder
+            && from < self.folders.len()
+        {
+            let sel = self.folder_sel.and_then(|i| self.folders.get(i).cloned());
+            let f = self.folders.remove(from);
+            let to = if to > from { to - 1 } else { to }.min(self.folders.len());
+            self.folders.insert(to, f);
+            self.folder_sel = sel.and_then(|s| self.folders.iter().position(|x| *x == s));
+            save_folders(&self.folders);
+            self.folder_counts.clear();
+        }
+        if open_trash {
+            self.own_trash = files::own_trash_list();
+            self.show_trash = true;
+        }
+        if let Some(op) = acts.op {
+            match op {
+                FileOp::Trash { path, is_dir, .. } => {
+                    let open = self.tabs_under(&path);
+                    if open.is_empty() && !is_dir {
+                        self.do_trash(ctx, &path);
+                    } else {
+                        self.file_op = Some(FileOp::Trash { path, open, is_dir });
+                    }
+                }
+                other => self.file_op = Some(other),
+            }
+        }
+        for (src, dest) in acts.moves {
+            if let Some(blocked) = self.cannot_follow(&src) {
+                self.notice = Some(format!("Close {blocked} first: it can't follow a move."));
+                continue;
+            }
+            match files::move_into(std::path::Path::new(&src), std::path::Path::new(&dest)) {
+                Ok(new) => {
+                    let new = new.to_string_lossy().to_string();
+                    self.retarget(&src, &new);
+                    self.notice = None;
+                    self.status = Some(format!("Moved {} to {}", file_name_of(&src), file_name_of(&dest)));
+                }
+                Err(e) => self.notice = Some(e),
+            }
+            self.refresh_home(ctx);
+        }
+        if let Some(p) = acts.reveal {
+            reveal_in_file_manager(&p);
+        }
+        if let Some(p) = acts.forget_recent {
+            self.recent.retain(|r| *r != p);
+            save_recent(&self.recent);
+        }
+    }
+
+    /// Open tabs whose file is `path` or inside it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn tabs_under(&self, path: &str) -> Vec<u64> {
+        self.entries.iter().filter(|e| e.path.as_deref().is_some_and(|p| std::path::Path::new(p).starts_with(path))).map(|e| e.id).collect()
+    }
+
+    /// The name of an open tab inside `path` whose app can't be re-pointed at a new path.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cannot_follow(&self, path: &str) -> Option<String> {
+        let ids = self.tabs_under(path);
+        self.entries.iter().find(|e| ids.contains(&e.id) && !matches!(e.kind, Kind::Word | Kind::Grid | Kind::Deck)).map(|e| e.name.clone())
+    }
+
+    /// `old` was renamed or moved to `new`: open tabs, Recent, sidebar folders and the shown
+    /// folder that point at it (or inside it) follow.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn retarget(&mut self, old: &str, new: &str) {
+        let swap = |p: &str| -> Option<String> { std::path::Path::new(p).strip_prefix(old).ok().map(|rel| std::path::Path::new(new).join(rel).to_string_lossy().trim_end_matches('/').to_string()) };
+        for e in &mut self.entries {
+            if let Some(p) = e.path.clone()
+                && let Some(n) = swap(&p)
+                && e.tab.set_path(&n)
+            {
+                e.name = file_name_of(&n);
+                e.path = Some(n);
+            }
+        }
+        for r in &mut self.recent {
+            if let Some(n) = swap(r) {
+                *r = n;
+            }
+        }
+        save_recent(&self.recent);
+        let mut folders_changed = false;
+        for f in &mut self.folders {
+            if let Some(n) = swap(f) {
+                *f = n;
+                folders_changed = true;
+            }
+        }
+        if folders_changed {
+            save_folders(&self.folders);
+        }
+        if let Some(c) = self.cwd.clone()
+            && let Some(n) = swap(&c)
+        {
+            self.cwd = Some(n);
+        }
+    }
+
+    /// Moves `path` to the trash, after closing the tabs that have it open.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn do_trash(&mut self, ctx: &egui::Context, path: &str) {
+        for id in self.tabs_under(path) {
+            self.close(id);
+        }
+        match files::trash(std::path::Path::new(path)) {
+            Ok(place) => {
+                let name = file_name_of(path);
+                self.notice = None;
+                self.status = Some(match place {
+                    files::Trashed::System => format!("Moved {name} to the Trash."),
+                    files::Trashed::Own => format!("Moved {name} to OfficeCraft Trash (this folder has no system trash)."),
+                });
+                self.recent.retain(|r| !std::path::Path::new(r).starts_with(path));
+                save_recent(&self.recent);
+                // A trashed sidebar folder leaves the sidebar.
+                let before = self.folders.len();
+                let sel = self.folder_sel.and_then(|i| self.folders.get(i).cloned());
+                self.folders.retain(|f| !std::path::Path::new(f).starts_with(path));
+                if self.folders.len() != before {
+                    save_folders(&self.folders);
+                    self.folder_sel = sel.and_then(|s| self.folders.iter().position(|x| *x == s));
+                    if self.folder_sel.is_none() {
+                        self.cwd = None;
+                    }
+                    self.folder_counts.clear();
+                }
+                if self.cwd.as_deref().is_some_and(|c| std::path::Path::new(c).starts_with(path)) {
+                    self.cwd = std::path::Path::new(path).parent().map(|p| p.to_string_lossy().to_string());
+                }
+                self.own_trash = files::own_trash_list();
+            }
+            Err(e) => self.notice = Some(format!("Couldn't move {} to the Trash: {e}", file_name_of(path))),
+        }
+        self.refresh_home(ctx);
+    }
+
+    /// Lists the shown folder and the sidebar counts again after a change on disk.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn refresh_home(&mut self, ctx: &egui::Context) {
+        if let Some(d) = self.shown_dir() {
+            self.request_listing(ctx, &d);
+        }
+        self.recount(ctx);
+    }
+
+    /// The rename / new folder / trash dialog, when one is open.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn file_op_ui(&mut self, ctx: &egui::Context) {
+        let Some(op) = &mut self.file_op else { return };
+        let mut done = false;
+        let mut go = false;
+        let title = match op {
+            FileOp::Rename { .. } => "Rename",
+            FileOp::NewFolder { .. } => "New folder",
+            FileOp::Trash { is_dir: true, .. } => "Move folder to Trash?",
+            FileOp::Trash { .. } => "Move to Trash?",
+        };
+        egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            *ui.visuals_mut() = home_visuals();
+            match op {
+                FileOp::Rename { name, error, .. } | FileOp::NewFolder { name, error, .. } => {
+                    let edit = ui.add(egui::TextEdit::singleline(name).desired_width(320.0));
+                    if !edit.has_focus() && !edit.lost_focus() {
+                        edit.request_focus();
+                    }
+                    if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        go = true;
+                    }
+                    if let Some(e) = error {
+                        ui.colored_label(egui::Color32::from_rgb(190, 40, 50), e.as_str());
+                    }
+                }
+                FileOp::Trash { path, open, is_dir } => {
+                    let name = file_name_of(path);
+                    ui.label(if *is_dir { format!("Move the folder {name} and everything in it to the Trash?") } else { format!("Move {name} to the Trash?") });
+                    if *is_dir {
+                        ui.label(egui::RichText::new(path.as_str()).size(12.0).color(MUTED));
+                    }
+                    if !open.is_empty() {
+                        let dirty = self.entries.iter().any(|e| open.contains(&e.id) && e.tab.is_dirty());
+                        ui.label(if dirty { "It is open with unsaved changes. Its tab will close and those changes will be lost." } else { "It is open. Its tab will close." });
+                    }
+                    ui.label(egui::RichText::new("You can restore it from the Trash.").size(12.0).color(MUTED));
+                }
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let verb = match op {
+                    FileOp::Rename { .. } => "Rename",
+                    FileOp::NewFolder { .. } => "Create",
+                    FileOp::Trash { .. } => "Move to Trash",
+                };
+                if ui.button(verb).clicked() {
+                    go = true;
+                }
+                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    done = true;
+                }
+            });
+        });
+        if go {
+            match self.file_op.take() {
+                Some(FileOp::Rename { path, name, .. }) => {
+                    if let Some(blocked) = self.cannot_follow(&path) {
+                        self.file_op = Some(FileOp::Rename { path, name, error: Some(format!("Close {blocked} first: it can't follow a rename.")) });
+                    } else {
+                        match files::rename(std::path::Path::new(&path), &name) {
+                            Ok(new) => {
+                                self.retarget(&path, &new.to_string_lossy());
+                                self.refresh_home(ctx);
+                            }
+                            Err(e) => self.file_op = Some(FileOp::Rename { path, name, error: Some(e) }),
+                        }
+                    }
+                }
+                Some(FileOp::NewFolder { dir, name, .. }) => match files::new_folder(std::path::Path::new(&dir), &name) {
+                    Ok(_) => self.refresh_home(ctx),
+                    Err(e) => self.file_op = Some(FileOp::NewFolder { dir, name, error: Some(e) }),
+                },
+                Some(FileOp::Trash { path, .. }) => self.do_trash(ctx, &path),
+                None => {}
+            }
+        } else if done {
+            self.file_op = None;
+        }
+    }
+
+    /// OfficeCraft's own trash: what was trashed where there is no system trash, with Restore.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn trash_list(&mut self, ui: &mut egui::Ui) {
+        let mut restore: Option<files::OwnItem> = None;
+        let mut purge: Option<files::OwnItem> = None;
+        if self.own_trash.is_empty() {
+            ui.add_space(24.0);
+            ui.label(egui::RichText::new("OfficeCraft Trash is empty.").color(MUTED));
+            return;
+        }
+        framed().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let w = ui.available_width();
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                for item in &self.own_trash {
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(45.0);
+                        ui.add_space(16.0);
+                        ui.vertical(|ui| {
+                            ui.add_space(5.0);
+                            ui.label(b(&file_name_of(&item.original.to_string_lossy()), 14.0));
+                            let from = item.original.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                            let when = item.deleted.map(ago).unwrap_or_default();
+                            let what = if item.is_dir { "Folder from" } else { "From" };
+                            ui.label(egui::RichText::new(format!("{what} {from}  ·  {when}")).size(12.0).color(MUTED));
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(12.0);
+                            if ui.button(egui::RichText::new("Delete forever").color(egui::Color32::from_rgb(180, 40, 50))).clicked() {
+                                purge = Some(item.clone());
+                            }
+                            if ui.button("Restore").clicked() {
+                                restore = Some(item.clone());
+                            }
+                        });
+                    });
+                    let y = ui.cursor().top();
+                    ui.painter().hline(ui.min_rect().left()..=ui.min_rect().left() + w, y, egui::Stroke::new(1.0, HAIRLINE));
+                }
+            });
+        });
+        if let Some(item) = restore {
+            match files::restore(&item) {
+                Ok(p) => self.status = Some(format!("Restored {}", p.display())),
+                Err(e) => self.notice = Some(e),
+            }
+            self.own_trash = files::own_trash_list();
+        }
+        if let Some(item) = purge {
+            if let Err(e) = files::purge(&item) {
+                self.notice = Some(e);
+            }
+            self.own_trash = files::own_trash_list();
+        }
+        if self.own_trash.is_empty() {
+            self.show_trash = false;
+        }
+    }
+
     /// Tabs holding unsaved work: (id, name).
     fn dirty_names(&self) -> Vec<(u64, String)> {
         self.entries.iter().filter(|e| e.tab.is_dirty()).map(|e| (e.id, e.name.clone())).collect()
@@ -2168,11 +2693,23 @@ impl Suite {
         let mut remove_folder: Option<usize> = None;
         let mut select: Option<Option<usize>> = None;
         let mut want_filter = self.filter;
+        let mut acts = HomeActions::default();
+        // Breadcrumb: go to this folder (`None`: the top of the sidebar folder).
+        let mut crumb_go: Option<Option<String>> = None;
+        let mut new_folder = false;
+        // Sidebar folder i dragged to position j.
+        let mut reorder: Option<(usize, usize)> = None;
+        let mut open_trash = false;
 
         let mut want_grid = self.home_grid;
 
+        // Recent rows are read from disk only when the list changes, not every frame (a file on
+        // a NAS makes every `stat` slow).
+        if self.recent_rows.0 != self.recent {
+            self.recent_rows = (self.recent.clone(), self.recent.iter().map(|p| row_for(p)).collect());
+        }
         let source: Vec<Row> = match self.folder_sel {
-            None => self.recent.iter().map(|p| row_for(p)).collect(),
+            None => self.recent_rows.1.clone(),
             Some(_) => self.folder_rows.clone(),
         };
         let q = self.search.to_lowercase();
@@ -2180,14 +2717,32 @@ impl Suite {
             .iter()
             .filter(|r| match want_filter {
                 Filter::All => true,
-                Filter::Only(k) => r.kind == Some(k),
+                // Folders stay, so the filter never hides the way into one.
+                Filter::Only(k) => r.is_dir || r.kind == Some(k),
             })
             .filter(|r| q.is_empty() || r.name.to_lowercase().contains(&q) || r.folder.to_lowercase().contains(&q))
             .cloned()
             .collect();
-        let title = match self.folder_sel.and_then(|i| self.folders.get(i)) {
-            Some(f) => std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone()),
+        let top = self.folder_sel.and_then(|i| self.folders.get(i)).cloned();
+        let title = match &top {
+            Some(f) => file_name_of(f),
             None => "Recent files".to_string(),
+        };
+        // The folders between the sidebar folder and the one shown: (name, path).
+        let crumbs: Vec<(String, String)> = match (&top, &self.cwd) {
+            (Some(t), Some(c)) => std::path::Path::new(c)
+                .strip_prefix(t)
+                .map(|rel| {
+                    let mut acc = std::path::PathBuf::from(t);
+                    rel.components()
+                        .map(|part| {
+                            acc.push(part);
+                            (part.as_os_str().to_string_lossy().to_string(), acc.to_string_lossy().to_string())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
         };
 
         egui::Panel::left("home_sidebar")
@@ -2227,9 +2782,49 @@ impl Suite {
                     });
                 });
                 for (i, f) in self.folders.iter().enumerate() {
-                    let name = std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| f.clone());
+                    let name = file_name_of(f);
                     let (resp, removed) = side_row(ui, self.folder_sel == Some(i), true, &name, self.folder_counts.get(i).copied(), true);
                     let resp = resp.on_hover_text(f);
+                    // Drag a folder up or down the list to reorder it.
+                    resp.dnd_set_drag_payload(FolderDrag(i));
+                    if let Some(from) = resp.dnd_hover_payload::<FolderDrag>()
+                        && from.0 != i
+                        && let Some(p) = ui.ctx().pointer_latest_pos()
+                    {
+                        let y = if p.y < resp.rect.center().y { resp.rect.top() } else { resp.rect.bottom() };
+                        ui.painter().hline(resp.rect.x_range(), y, egui::Stroke::new(2.0, ACCENT));
+                    }
+                    if let Some(from) = dropped::<FolderDrag>(&resp)
+                        && let Some(p) = ui.ctx().pointer_latest_pos()
+                    {
+                        let below = p.y >= resp.rect.center().y;
+                        reorder = Some((from.0, if below { i + 1 } else { i }));
+                    }
+                    // A file or folder from the list dropped here moves into this folder.
+                    if FILE_OPS {
+                        paint_drop_hint(ui, &resp, resp.rect);
+                        if let Some(m) = dropped::<MovePayload>(&resp) {
+                            acts.moves.push((m.0.clone(), f.clone()));
+                        }
+                    }
+                    resp.context_menu(|ui| {
+                        menu_visuals(ui);
+                        if ui.button("Remove from sidebar").on_hover_text("The folder and its files stay on disk").clicked() {
+                            remove_folder = Some(i);
+                            ui.close();
+                        }
+                        if FILE_OPS {
+                            if ui.button("Show in file manager").clicked() {
+                                acts.reveal = Some(f.clone());
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button(egui::RichText::new("Move folder to Trash…").color(egui::Color32::from_rgb(180, 40, 50))).clicked() {
+                                acts.op = Some(FileOp::Trash { path: f.clone(), open: Vec::new(), is_dir: true });
+                                ui.close();
+                            }
+                        }
+                    });
                     if removed {
                         remove_folder = Some(i);
                     } else if resp.clicked() {
@@ -2246,6 +2841,15 @@ impl Suite {
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     add_folder = true;
                 }
+                // Items trashed from places with no system trash (a NAS share): restore them here.
+                #[cfg(not(target_arch = "wasm32"))]
+                if !self.own_trash.is_empty() {
+                    ui.add_space(14.0);
+                    let r = side_row(ui, self.show_trash, false, "OfficeCraft Trash", Some(self.own_trash.len()), false).0;
+                    if r.on_hover_text("Files moved to Trash from folders that have no system trash").clicked() {
+                        open_trash = true;
+                    }
+                }
                 }
                 // the sidebar's foot: the contact page (contact.html, the shared contact form)
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -2260,7 +2864,40 @@ impl Suite {
 
         egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::from_rgb(237, 241, 245)).inner_margin(egui::Margin::symmetric(36, 26))).show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(b(&title, 24.0));
+                if self.show_trash {
+                    ui.label(b("OfficeCraft Trash", 24.0));
+                } else if crumbs.is_empty() {
+                    ui.label(b(&title, 24.0));
+                } else {
+                    // The path from the sidebar folder down to the one shown: each part goes back
+                    // up to it, and takes a dragged row (move it there).
+                    let top_resp = ui.add(egui::Label::new(b(&title, 24.0).color(SOFT)).sense(egui::Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if top_resp.clicked() {
+                        crumb_go = Some(None);
+                    }
+                    if let Some(m) = dropped::<MovePayload>(&top_resp)
+                        && let Some(t) = &top
+                    {
+                        acts.moves.push((m.0.clone(), t.clone()));
+                    }
+                    paint_drop_hint(ui, &top_resp, top_resp.rect.expand(4.0));
+                    let last = crumbs.len() - 1;
+                    for (k, (name, path)) in crumbs.iter().enumerate() {
+                        ui.label(b("›", 22.0).color(MUTED));
+                        let text = if k == last { b(name, 24.0) } else { b(name, 24.0).color(SOFT) };
+                        let r = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+                        if k != last {
+                            let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if r.clicked() {
+                                crumb_go = Some(Some(path.clone()));
+                            }
+                            if let Some(m) = dropped::<MovePayload>(&r) {
+                                acts.moves.push((m.0.clone(), path.clone()));
+                            }
+                            paint_drop_hint(ui, &r, r.rect.expand(4.0));
+                        }
+                    }
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.scope(|ui| {
                         let hover = egui::Color32::from_rgb(9, 100, 96);
@@ -2283,9 +2920,16 @@ impl Suite {
                             }
                         });
                     });
+                    ui.spacing_mut().button_padding = egui::vec2(16.0, 10.0);
                     let open_btn = egui::Button::new(b("Open file", 14.0)).fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(10.0).min_size(egui::vec2(0.0, 40.0));
                     if ui.add(open_btn).clicked() {
                         pick_files = true;
+                    }
+                    if FILE_OPS && self.folder_sel.is_some() && !self.show_trash {
+                        let nf = egui::Button::new(b("New folder", 14.0)).fill(egui::Color32::WHITE).stroke(egui::Stroke::new(1.0, LINE)).corner_radius(10.0).min_size(egui::vec2(0.0, 40.0));
+                        if ui.add(nf).on_hover_text("Make a folder here").clicked() {
+                            new_folder = true;
+                        }
                     }
                     framed().inner_margin(egui::Margin::symmetric(12, 0)).show(ui, |ui| {
                         ui.set_height(38.0);
@@ -2300,6 +2944,9 @@ impl Suite {
             if let Some(n) = &self.notice {
                 ui.add_space(6.0);
                 ui.colored_label(egui::Color32::from_rgb(190, 40, 50), n);
+            } else if let Some(st) = &self.status {
+                ui.add_space(6.0);
+                ui.colored_label(ACCENT, st);
             }
 
             ui.add_space(18.0);
@@ -2380,9 +3027,17 @@ impl Suite {
             });
             ui.add_space(14.0);
 
-            if rows.is_empty() {
+            #[cfg(not(target_arch = "wasm32"))]
+            let trash_view = self.show_trash;
+            #[cfg(target_arch = "wasm32")]
+            let trash_view = false;
+            let in_recent = self.folder_sel.is_none();
+            if trash_view {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.trash_list(ui);
+            } else if rows.is_empty() {
                 ui.add_space(24.0);
-                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No supported files in this folder." } else { if cfg!(target_arch = "wasm32") { web_open_hint() } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
+                ui.label(egui::RichText::new(if self.folder_sel.is_some() { "No folders or supported files here." } else { if cfg!(target_arch = "wasm32") { web_open_hint() } else { "Files you open appear here. Drop a file on the window, or press Open file." } }).color(MUTED));
             } else if want_grid {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     let gap = 16.0;
@@ -2393,25 +3048,33 @@ impl Suite {
                     for chunk in rows.chunks(cols as usize) {
                         ui.horizontal(|ui| {
                             for r in chunk {
-                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 164.0), egui::Sense::click());
+                                let sense = if FILE_OPS { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, 164.0), sense);
                                 let resp = resp.on_hover_text(&r.path).on_hover_cursor(egui::CursorIcon::PointingHand);
                                 let stroke = if resp.hovered() { egui::Stroke::new(1.5, ACCENT) } else { egui::Stroke::new(1.0, LINE) };
                                 let p = ui.painter();
                                 p.rect_filled(rect, 10.0, egui::Color32::WHITE);
-                                let top = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 96.0));
-                                p.rect_filled(top, egui::CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 }, kind_color(r.kind).gamma_multiply(0.14));
-                                thumb(p, r.kind, top);
+                                let top_r = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 96.0));
+                                if r.is_dir {
+                                    p.rect_filled(top_r, egui::CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 }, ACCENT.gamma_multiply(0.10));
+                                    paint_folder_big(p, top_r.center(), ACCENT);
+                                } else {
+                                    p.rect_filled(top_r, egui::CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 }, kind_color(r.kind).gamma_multiply(0.14));
+                                    thumb(p, r.kind, top_r);
+                                }
                                 p.rect_stroke(rect, 10.0, stroke, egui::StrokeKind::Inside);
                                 let name: String = if r.name.chars().count() > 26 { r.name.chars().take(25).collect::<String>() + "…" } else { r.name.clone() };
                                 p.text(rect.min + egui::vec2(14.0, 110.0), egui::Align2::LEFT_TOP, name, egui::FontId::new(14.0, bold()), INK);
-                                let sub = match r.modified {
-                                    Some(t) => format!("{}, {}", r.folder, ago(t)),
-                                    None => r.folder.clone(),
+                                let sub = match (r.is_dir, r.modified) {
+                                    (true, _) => "Folder".to_string(),
+                                    (false, Some(t)) => format!("{}, {}", r.folder, ago(t)),
+                                    (false, None) => r.folder.clone(),
                                 };
                                 p.text(rect.min + egui::vec2(14.0, 136.0), egui::Align2::LEFT_TOP, sub, egui::FontId::proportional(12.0), MUTED);
-                                if resp.clicked() {
-                                    open = Some(r.path.clone());
+                                if r.is_dir {
+                                    paint_drop_hint(ui, &resp, rect);
                                 }
+                                row_interact(&resp, r, in_recent, &mut acts);
                             }
                         });
                     }
@@ -2428,7 +3091,8 @@ impl Suite {
                     ui.painter().hline(hdr.x_range(), hdr.bottom(), egui::Stroke::new(1.0, HAIRLINE));
                     egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                         for r in &rows {
-                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 45.0), egui::Sense::click());
+                            let sense = if FILE_OPS { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 45.0), sense);
                             let resp = resp.on_hover_text(&r.path).on_hover_cursor(egui::CursorIcon::PointingHand);
                             let p = ui.painter();
                             if resp.hovered() {
@@ -2436,34 +3100,64 @@ impl Suite {
                             }
                             let mid = rect.center().y;
                             let badge_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 28.0, mid), egui::vec2(24.0, 24.0));
-                            p.rect_filled(badge_rect, 6.0, kind_color(r.kind));
-                            p.text(badge_rect.center(), egui::Align2::CENTER_CENTER, kind_abbr(r.kind), egui::FontId::new(11.0, bold()), egui::Color32::WHITE);
+                            if r.is_dir {
+                                p.rect_filled(badge_rect, 6.0, ACCENT.gamma_multiply(0.14));
+                                paint_folder(p, badge_rect.center(), ACCENT);
+                            } else {
+                                p.rect_filled(badge_rect, 6.0, kind_color(r.kind));
+                                p.text(badge_rect.center(), egui::Align2::CENTER_CENTER, kind_abbr(r.kind), egui::FontId::new(11.0, bold()), egui::Color32::WHITE);
+                            }
                             let clip = p.with_clip_rect(egui::Rect::from_min_max(rect.min + egui::vec2(cols[0], 0.0), egui::pos2(rect.left() + cols[1] - 12.0, rect.bottom())));
                             clip.text(egui::pos2(rect.left() + cols[0], mid), egui::Align2::LEFT_CENTER, &r.name, egui::FontId::new(14.0, bold()), INK);
                             let clip2 = p.with_clip_rect(egui::Rect::from_min_max(egui::pos2(rect.left() + cols[1], rect.top()), egui::pos2(rect.left() + cols[2] - 12.0, rect.bottom())));
-                            clip2.text(egui::pos2(rect.left() + cols[1], mid), egui::Align2::LEFT_CENTER, &r.folder, egui::FontId::proportional(14.0), SOFT);
+                            clip2.text(egui::pos2(rect.left() + cols[1], mid), egui::Align2::LEFT_CENTER, if r.is_dir { "Folder" } else { &r.folder }, egui::FontId::proportional(14.0), SOFT);
                             p.text(egui::pos2(rect.left() + cols[2], mid), egui::Align2::LEFT_CENTER, r.modified.map(ago).unwrap_or_default(), egui::FontId::proportional(14.0), SOFT);
-                            p.text(egui::pos2(rect.left() + cols[3], mid), egui::Align2::LEFT_CENTER, human_size(r.size), egui::FontId::proportional(14.0), SOFT);
+                            p.text(egui::pos2(rect.left() + cols[3], mid), egui::Align2::LEFT_CENTER, if r.is_dir { "—".to_string() } else { human_size(r.size) }, egui::FontId::proportional(14.0), SOFT);
                             p.hline(rect.x_range(), rect.bottom(), egui::Stroke::new(1.0, HAIRLINE));
-                            if resp.clicked() {
-                                open = Some(r.path.clone());
+                            if r.is_dir {
+                                paint_drop_hint(ui, &resp, rect);
                             }
+                            row_interact(&resp, r, in_recent, &mut acts);
                         }
                     });
                 });
             }
         });
 
+        // A dragged row follows the pointer with its name.
+        if let Some(m) = egui::DragAndDrop::payload::<MovePayload>(&ctx)
+            && let Some(p) = ctx.pointer_latest_pos()
+        {
+            let layer = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("row-drag")));
+            layer.text(p + egui::vec2(14.0, 14.0), egui::Align2::LEFT_TOP, format!("Move {}", file_name_of(&m.0)), egui::FontId::proportional(13.0), ACCENT);
+        }
+
+        if let Some(p) = acts.open.take() {
+            open = Some(p);
+        }
         if want_grid != self.home_grid {
             self.home_grid = want_grid;
             save_home_grid(want_grid);
         }
 
         self.filter = want_filter;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.apply_home(&ctx, acts, crumb_go, new_folder, reorder, open_trash);
+            self.file_op_ui(&ctx);
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = (acts, crumb_go, new_folder, reorder, open_trash);
         if let Some(s) = select {
             self.folder_sel = s;
+            self.cwd = None;
+            self.show_trash = false;
             self.folder_rows = s.and_then(|i| self.folders.get(i)).map(|d| folder_listing(&self.scans, d)).unwrap_or_default();
             // Files may have changed since the folder was added: list it again in the background.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(d) = self.shown_dir() {
+                self.request_listing(&ctx, &d);
+            }
             #[cfg(target_arch = "wasm32")]
             if let Some(d) = s.and_then(|i| self.folders.get(i)) {
                 web::rescan_folder(d, self.folder_scans.clone());
@@ -2474,8 +3168,10 @@ impl Suite {
             self.scans.remove(&gone);
             save_folders(&self.folders);
             self.folder_sel = None;
+            self.cwd = None;
             self.folder_rows.clear();
-            self.recount();
+            self.folder_counts.truncate(0);
+            self.recount(&ctx);
         }
         #[cfg(not(target_arch = "wasm32"))]
         if add_folder && let Some(dir) = rfd::FileDialog::new().pick_folder() {
@@ -2484,10 +3180,11 @@ impl Suite {
                 self.folders.push(dir.clone());
                 save_folders(&self.folders);
             }
-            self.recount();
             let i = self.folders.iter().position(|f| *f == dir);
             self.folder_sel = i;
-            self.folder_rows = folder_listing(&self.scans, &dir);
+            self.show_trash = false;
+            self.browse(&ctx, None);
+            self.recount(&ctx);
         }
         #[cfg(not(target_arch = "wasm32"))]
         if pick_files && let Some(p) = rfd::FileDialog::new().add_filter("Office files", OPEN_EXTS).pick_files() {
@@ -2850,6 +3547,23 @@ impl eframe::App for Suite {
                 self.scans.insert(key, rows);
                 ctx.request_repaint();
             }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // First frame (and after a folder is added or removed): count the sidebar folders.
+            if self.folder_counts.len() != self.folders.len() {
+                self.recount(ctx);
+            }
+            // Coming back to the window: files may have changed elsewhere, list them again.
+            let focused = ctx.input(|i| i.focused);
+            if focused && !self.focused && self.view == View::Home {
+                self.recount(ctx);
+                if let Some(d) = self.shown_dir() {
+                    self.request_listing(ctx, &d);
+                }
+            }
+            self.focused = focused;
+            self.take_listings();
         }
         if self.restore_home && self.pending.is_empty() {
             self.view = View::Home;

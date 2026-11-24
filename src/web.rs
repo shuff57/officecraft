@@ -354,6 +354,7 @@ fn add_folder_from_input(scans: crate::FolderScans) -> Result<(), String> {
                 name,
                 modified: Some(modified),
                 size: prop_f64(&file, "size") as u64,
+                is_dir: false,
             });
             by_rel.insert(rel, file);
         }
@@ -410,6 +411,7 @@ async fn scan_dir(root: &Js, key: &str) -> Result<Vec<crate::Row>, String> {
                         folder: dir_name.clone(),
                         modified: Some(modified),
                         size: prop_f64(&file, "size") as u64,
+                        is_dir: false,
                     });
                     if rows.len() >= MAX_ROWS {
                         break 'walk;
