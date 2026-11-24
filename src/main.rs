@@ -159,19 +159,58 @@ fn deck_services() -> deckcraft_ui_egui::Services {
     }
 }
 
+/// Where unsaved documents are copied while they change, so a crash or a discarded quit can be
+/// undone on the next launch: `<data dir>/recovery/{word,deck}`, and the context that wakes the
+/// window when a copy is written. Set once at launch; unset in a page, in self-tests and with
+/// `OFFICECRAFT_NO_RECOVERY`.
+#[cfg(not(target_arch = "wasm32"))]
+static RECOVERY: std::sync::OnceLock<(std::path::PathBuf, egui::Context)> = std::sync::OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn recovery_dir(app: &str) -> Option<(std::path::PathBuf, egui::Context)> {
+    RECOVERY.get().map(|(d, ctx)| (d.join(app), ctx.clone()))
+}
+
+/// A DeckCraft session that keeps AutoRecover copies of its unsaved presentations.
+fn deck_session(#[allow(unused_mut)] mut session: deckcraft_engine::Session) -> deckcraft_engine::Session {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        session.recovery_dir = recovery_dir("deck").map(|(d, _)| d);
+    }
+    session
+}
+
+/// Whether WordCraft left a copy of an unsaved document in `dir` (a record folder holding a
+/// snapshot). A Word tab opened at launch then offers it back.
+#[cfg(not(target_arch = "wasm32"))]
+fn word_recovery_waiting(dir: &std::path::Path) -> bool {
+    let Ok(records) = std::fs::read_dir(dir) else { return false };
+    records.flatten().any(|r| {
+        std::fs::read_dir(r.path()).is_ok_and(|files| files.flatten().any(|f| f.file_name().to_string_lossy().starts_with("snapshot-")))
+    })
+}
+
 impl Tab {
     fn create(kind: Kind) -> Tab {
         match kind {
             Kind::Word => {
                 let doc = wordcraft_doc::Document::new();
-                Tab::Word(Box::new(wordcraft_ui_egui::WordApp::new(wordcraft_engine::Session::new(doc), word_services())))
+                #[allow(unused_mut)]
+                let mut session = wordcraft_engine::Session::new(doc);
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some((dir, ctx)) = recovery_dir("word")
+                    && let Err(e) = session.enable_recovery(dir, std::sync::Arc::new(move || ctx.request_repaint()))
+                {
+                    log::warn!("Docs recovery unavailable: {e}");
+                }
+                Tab::Word(Box::new(wordcraft_ui_egui::WordApp::new(session, word_services())))
             }
             Kind::Grid => {
                 let mut session = gridcraft_engine::Session::new();
                 session.new_workbook();
                 Tab::Grid(Box::new(gridcraft_ui_egui::SheetApp::new(session, grid_services())))
             }
-            Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deckcraft_engine::Session::new(), deck_services()))),
+            Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deck_session(deckcraft_engine::Session::new()), deck_services()))),
             Kind::Pdf => {
                 #[allow(unused_mut)]
                 let mut app = pdfcraft_ui_egui::PdfCraftApp::new();
@@ -300,6 +339,17 @@ impl Tab {
             Tab::Equation(_) => false,
             // The store saves on every mutation; there is no separate dirty flag.
             Tab::Vershion(_) => false,
+        }
+    }
+
+    /// The file the app now saves to, which Save As changes. `None` when the app has no file or
+    /// does not report one (PDF keeps its own per-document paths).
+    fn current_path(&self) -> Option<String> {
+        match self {
+            Tab::Word(a) => a.session.path.as_ref().map(|p| p.to_string_lossy().to_string()),
+            Tab::Grid(a) => a.session.active().and_then(|d| d.path.clone()),
+            Tab::Deck(a) => a.session.active().and_then(|d| d.path.clone()),
+            _ => None,
         }
     }
 
@@ -616,6 +666,22 @@ fn row_for(path: &str) -> Row {
         modified: meta.as_ref().and_then(|m| m.modified().ok()),
         size: meta.map(|m| m.len()).unwrap_or(0),
     }
+}
+
+/// `path` resolved to its one canonical spelling (symlinks, `.` and `..` removed). Unchanged in a
+/// browser page, or when the file cannot be resolved.
+fn canonical_path(path: &str) -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(p) = std::fs::canonicalize(path)
+        && let Some(s) = p.to_str()
+    {
+        return s.to_string();
+    }
+    path.to_string()
+}
+
+fn file_name_of(path: &str) -> String {
+    std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string())
 }
 
 /// Supported files in `dir` and the folders two levels below it, newest first.
@@ -1020,6 +1086,15 @@ fn save_session(lines: &[String]) {
     platform::write_lines("session.txt", lines);
 }
 
+/// Why the window is about to close.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quit {
+    Close,
+    /// Updates: start the new build, then close.
+    Restart,
+}
+
 struct Suite {
     view: View,
     entries: Vec<Entry>,
@@ -1030,6 +1105,10 @@ struct Suite {
     notice: Option<String>,
     /// A tab with unsaved work whose close is waiting for confirmation.
     confirm_close: Option<u64>,
+    /// Leaving the app (window close or an update's restart) with unsaved tabs, waiting for an answer.
+    confirm_quit: Option<Quit>,
+    /// The user chose to leave and discard: the next close request goes through.
+    quit_ok: bool,
     ai_cfg: ai::Config,
     ai_settings: Option<ai::Settings>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -1124,7 +1203,7 @@ impl Suite {
             Some(f) if recent.is_empty() => (Some(0), list_folder(f)),
             _ => (None, Vec::new()),
         };
-        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
+        let mut suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite.recount();
         suite
     }
@@ -1146,7 +1225,7 @@ impl Suite {
         let tab = match kind {
             // A presentation needs a slide to work on: an assistant (or a first click) has nothing
             // to act on in an empty session.
-            Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deckcraft_engine::Session::with_new(), deck_services()))),
+            Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deck_session(deckcraft_engine::Session::with_new()), deck_services()))),
             _ => Tab::create(kind),
         };
         self.push_tab(kind, tab)
@@ -1639,6 +1718,10 @@ impl Suite {
             ctx.request_repaint();
             return;
         }
+        // One spelling per file, so a symlink or `..` path finds the tab that already has it
+        // instead of opening a second copy that would overwrite the first on save.
+        let canonical = canonical_path(path);
+        let path = canonical.as_str();
         if let Some(e) = self.entries.iter().find(|e| e.path.as_deref() == Some(path)) {
             self.view = View::Tab(e.id);
             ctx.request_repaint();
@@ -1995,6 +2078,77 @@ impl Suite {
             save_session(&lines);
             self.last_session = lines;
         }
+    }
+
+    /// Follows Save As: a tab whose app now saves to another file takes that file's path and name,
+    /// so the tab title, the open-file check and the saved session all point at the new file.
+    fn sync_paths(&mut self) {
+        let mut moved = Vec::new();
+        for e in &mut self.entries {
+            let Some(now) = e.tab.current_path() else { continue };
+            // A page has no paths, only names: retitle the tab, keep it out of Recent.
+            if cfg!(target_arch = "wasm32") {
+                let name = file_name_of(&now);
+                if e.name != name {
+                    e.name = name;
+                }
+                continue;
+            }
+            if e.path.as_deref() == Some(now.as_str()) {
+                continue;
+            }
+            let now = canonical_path(&now);
+            if e.path.as_deref() != Some(now.as_str()) {
+                e.name = file_name_of(&now);
+                e.path = Some(now.clone());
+                moved.push(now);
+            }
+        }
+        for p in moved {
+            self.recent.retain(|r| *r != p);
+            self.recent.insert(0, p);
+            self.recent.truncate(MAX_RECENT);
+            save_recent(&self.recent);
+        }
+    }
+
+    /// Launch: brings back documents a previous run left unsaved. DeckCraft reopens its copies
+    /// itself; a Word tab offers WordCraft's on its recovery page.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reopen_recovered(&mut self) {
+        let mut deck = Tab::create(Kind::Deck);
+        if let Tab::Deck(a) = &mut deck
+            && let Ok(v) = a.session.execute("file.recovery.open", &serde_json::json!({}))
+            && let Some(n) = v.get("opened").and_then(|o| o.as_array()).map(Vec::len).filter(|n| *n > 0)
+        {
+            a.set_status(format!("Recovered {n} unsaved presentation{} from the last session", if n == 1 { "" } else { "s" }));
+            self.push_tab(Kind::Deck, deck);
+        }
+        if let Some((dir, _)) = recovery_dir("word")
+            && word_recovery_waiting(&dir)
+        {
+            self.push_tab(Kind::Word, Tab::create(Kind::Word));
+        }
+    }
+
+    /// Tabs holding unsaved work: (id, name).
+    fn dirty_names(&self) -> Vec<(u64, String)> {
+        self.entries.iter().filter(|e| e.tab.is_dirty()).map(|e| (e.id, e.name.clone())).collect()
+    }
+
+    /// Closes the window (and for an update, starts the new build first). With unsaved tabs it
+    /// asks instead, unless the user already chose to discard them.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn leave(&mut self, ctx: &egui::Context, why: Quit) {
+        if !self.quit_ok && !self.dirty_names().is_empty() {
+            self.confirm_quit = Some(why);
+            return;
+        }
+        self.quit_ok = true;
+        if why == Quit::Restart {
+            updater::spawn_new_instance();
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     fn request_close(&mut self, id: u64) {
@@ -2445,6 +2599,9 @@ fn ai_app(kind: Kind) -> ai::App {
 }
 
 impl eframe::App for Suite {
+    // TODO(official releases): WordCraft 0.18 adds `Session::finish_recovery()`; call it for each
+    // Word tab in `on_exit` so a save just before quitting is not offered back next launch.
+
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let mut shot_tab = None;
         // Leaving GridCraft or PdfCraft: the context still holds what they installed, before
@@ -2698,6 +2855,7 @@ impl eframe::App for Suite {
             self.view = View::Home;
             self.restore_home = false;
         }
+        self.sync_paths();
         self.save_session_if_changed();
         // The fonts put back last frame are active now: the app's own style can follow.
         if self.settle == 1
@@ -2726,6 +2884,12 @@ impl eframe::App for Suite {
                 e.tab.context_changed(ctx);
                 self.ctx_owner = Some(e.kind);
                 self.owner_frames = 0;
+                // verSHion installs its fonts there, and its first screen names them ("vs-serif")
+                // straight away: they are only bound on the next pass, so draw nothing until then.
+                if e.kind == Kind::Vershion {
+                    self.settle = 2;
+                    ctx.request_repaint();
+                }
                 if restores_look(e.kind)
                     && let Some(look) = self.looks.get(&e.kind)
                 {
@@ -2924,8 +3088,50 @@ impl eframe::App for Suite {
         }
         #[cfg(not(target_arch = "wasm32"))]
         if self.updater.ui(ui.ctx()) {
-            updater::spawn_new_instance();
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            self.leave(ui.ctx(), Quit::Restart);
+        }
+        // The window's close button (or the desktop closing it): ask first when work is unsaved.
+        #[cfg(not(target_arch = "wasm32"))]
+        if ui.ctx().input(|i| i.viewport().close_requested()) && !self.quit_ok && !self.dirty_names().is_empty() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm_quit = Some(Quit::Close);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(why) = self.confirm_quit {
+            let dirty = self.dirty_names();
+            let mut back = false;
+            let mut go = false;
+            let title = if why == Quit::Restart { "Restart without saving?" } else { "Quit without saving?" };
+            egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ui.ctx(), |ui| {
+                ui.label(if dirty.len() == 1 { "This document has unsaved changes:".to_string() } else { format!("{} documents have unsaved changes:", dirty.len()) });
+                for (_, name) in dirty.iter().take(8) {
+                    ui.label(format!("  •  {name}"));
+                }
+                if dirty.len() > 8 {
+                    ui.label(format!("  …and {} more", dirty.len() - 8));
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Go back and save").clicked() {
+                        back = true;
+                    }
+                    let verb = if why == Quit::Restart { "Restart and discard" } else { "Quit and discard" };
+                    if ui.button(verb).clicked() {
+                        go = true;
+                    }
+                });
+            });
+            if back {
+                self.confirm_quit = None;
+                if let Some((id, _)) = dirty.first() {
+                    self.view = View::Tab(*id);
+                }
+            }
+            if go {
+                self.confirm_quit = None;
+                self.quit_ok = true;
+                self.leave(ui.ctx(), why);
+            }
         }
         if let Some(id) = toggle_chat
             && let Some(e) = self.entry_mut(id)
@@ -3192,5 +3398,18 @@ fn main() -> eframe::Result {
         suite.restore_home = false;
         suite.pending.extend(args);
     }
-    eframe::run_native("OfficeCraft", options, Box::new(move |_cc| Ok(Box::new(suite))))
+    eframe::run_native(
+        "OfficeCraft",
+        options,
+        Box::new(move |cc| {
+            if !selftest
+                && std::env::var_os("OFFICECRAFT_NO_RECOVERY").is_none()
+                && let Some(dir) = platform::data_dir()
+            {
+                let _ = RECOVERY.set((dir.join("recovery"), cc.egui_ctx.clone()));
+                suite.reopen_recovered();
+            }
+            Ok(Box::new(suite))
+        }),
+    )
 }

@@ -12,6 +12,15 @@ mod imp {
             .map(|c| c.join("officecraft"))
     }
 
+    /// `~/.local/share/officecraft` (or `$XDG_DATA_HOME/officecraft`): data that is not a setting,
+    /// such as recovery copies of unsaved documents.
+    pub fn data_dir() -> Option<PathBuf> {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            .map(|c| c.join("officecraft"))
+    }
+
     pub fn read(name: &str) -> Option<String> {
         std::fs::read_to_string(config_dir()?.join(name)).ok()
     }
