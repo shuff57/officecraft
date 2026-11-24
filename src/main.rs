@@ -748,15 +748,9 @@ fn load_folders() -> Vec<String> {
     if cfg!(target_arch = "wasm32") {
         return Vec::new();
     }
-    // One spelling per folder (symlinks resolved), so paths listed under it match open tabs.
-    let mut out: Vec<String> = Vec::new();
-    for f in platform::read_lines("folders.txt") {
-        let c = canonical_path(&f);
-        if !out.contains(&c) {
-            out.push(c);
-        }
-    }
-    out
+    // Not resolved here: a folder on a share that is down would block the launch. Folders are
+    // stored resolved when added, and open-tab lookups resolve the path they are given.
+    platform::read_lines("folders.txt")
 }
 
 fn save_folders(list: &[String]) {
@@ -1487,9 +1481,7 @@ impl Suite {
         self.status = None;
         if let Some(d) = self.shown_dir() {
             self.folder_rows = folder_listing(&self.scans, &d);
-            if !self.scans.contains_key(&d) {
-                self.listing_state = Listing::Loading;
-            }
+            self.listing_state = if self.scans.contains_key(&d) { Listing::Ready } else { Listing::Loading };
             self.request_listing(ctx, &d);
         }
     }
@@ -2842,6 +2834,18 @@ impl Suite {
         if why == Quit::Restart && !self.leaving {
             updater::spawn_new_instance();
         }
+        // Slides and PDF tabs cancel a close themselves while they hold unsaved work (each asks
+        // its own question). The user has answered already: tell DeckCraft, and show Home so no
+        // app's own guard runs (PdfCraft's answer can't be set from outside).
+        for e in &mut self.entries {
+            if let Tab::Deck(a) = &mut e.tab {
+                a.quit_confirmed = true;
+            }
+        }
+        if !self.leaving {
+            self.untile();
+            self.view = View::Home;
+        }
         self.leaving = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
@@ -3325,13 +3329,15 @@ impl Suite {
             self.folder_sel = s;
             self.cwd = None;
             self.show_trash = false;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.purge_confirm = None;
+            }
             self.folder_rows = s.and_then(|i| self.folders.get(i)).map(|d| folder_listing(&self.scans, d)).unwrap_or_default();
             // Files may have changed since the folder was added: list it again in the background.
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(d) = self.shown_dir() {
-                if !self.scans.contains_key(&d) {
-                    self.listing_state = Listing::Loading;
-                }
+                self.listing_state = if self.scans.contains_key(&d) { Listing::Ready } else { Listing::Loading };
                 self.request_listing(&ctx, &d);
             }
             #[cfg(target_arch = "wasm32")]
@@ -3825,6 +3831,19 @@ impl eframe::App for Suite {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // The window is asked to close while a tab holds unsaved work: the shell asks once, for
+        // every tab. The request is taken out of the input, so no app shows its own "Save
+        // changes?" on top (DeckCraft and PdfCraft would) and eframe keeps the window open.
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.quit_ok
+            && let Some(info) = raw.viewports.get_mut(&egui::ViewportId::ROOT)
+            && info.events.contains(&egui::ViewportEvent::Close)
+            && !self.dirty_names().is_empty()
+        {
+            info.events.retain(|e| *e != egui::ViewportEvent::Close);
+            self.confirm_quit = Some(Quit::Close);
+            ctx.request_repaint();
+        }
         // Files of a type the suite opens get their own tab, whichever tab is showing; anything
         // else (a picture dropped on a document) stays for the active app.
         let mut keep = Vec::new();
@@ -3890,6 +3909,10 @@ impl eframe::App for Suite {
                 if hresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     select = Some(View::Home);
                     self.show_trash = false;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        self.purge_confirm = None;
+                    }
                 }
                 bar_rect = ui.max_rect();
                 // Many tabs: the strip scrolls (mouse wheel) and keeps the active tab in view; the
@@ -4018,12 +4041,6 @@ impl eframe::App for Suite {
         if self.leaving {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             ui.ctx().request_repaint();
-        }
-        // The window's close button (or the desktop closing it): ask first when work is unsaved.
-        #[cfg(not(target_arch = "wasm32"))]
-        if ui.ctx().input(|i| i.viewport().close_requested()) && !self.quit_ok && !self.dirty_names().is_empty() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.confirm_quit = Some(Quit::Close);
         }
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(why) = self.confirm_quit {

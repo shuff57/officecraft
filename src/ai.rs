@@ -218,8 +218,11 @@ impl Settings {
                 for p in Provider::ALL {
                     if ui.selectable_label(d.provider == p, p.title()).clicked() {
                         d.provider = p;
-                        *self.test.lock().unwrap() = None;
-                        *self.probe.lock().unwrap() = Probe::default();
+                        // A test still running belongs to the other provider: stop it, and let
+                        // its answers land where no one reads them.
+                        self.probe.lock().unwrap().stop = true;
+                        self.probe = Default::default();
+                        self.test = Default::default();
                     }
                 }
             });
@@ -259,6 +262,11 @@ impl Settings {
                                 d.keys[0].clear();
                                 self.saved_note = "The endpoint moved to another host, so its API key was cleared.".into();
                             }
+                            // Another server has other models: pick from its list.
+                            d.models[0].clear();
+                            self.probe.lock().unwrap().stop = true;
+                            self.probe = Default::default();
+                            self.test = Default::default();
                             self.key_host = host;
                         }
                         if insecure_remote(&d.local_url) {
