@@ -124,7 +124,9 @@ fn word_services() -> wordcraft_ui_egui::Services {
         // Formatted copy and paste across the tabs (a Sheets range pastes as a table).
         clipboard_text: Some(Box::new(clip::text)),
         clipboard_html: Some(Box::new(clip::html)),
-        set_clipboard_html: Some(Box::new(clip::set_html)),
+        // (text, html, rtf, mathml): the shell's clipboard carries the HTML beside the text; a copy
+        // without HTML goes through egui as text.
+        set_clipboard_rich: Some(Box::new(|text: &str, html: &str, _rtf: &str, _mathml: &str| !html.is_empty() && clip::set_html(html, text))),
         ..Default::default()
     }
 }
@@ -242,9 +244,9 @@ impl Tab {
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         match self {
-            Tab::Word(a) => a.raw_input_hook(raw),
-            Tab::Grid(a) => a.raw_input_hook(raw),
-            Tab::Deck(a) => a.raw_input_hook(raw),
+            Tab::Word(a) => a.raw_input_hook(ctx, raw),
+            Tab::Grid(a) => a.raw_input_hook(ctx, raw),
+            Tab::Deck(a) => a.raw_input_hook(ctx, raw),
             Tab::Pdf(a) => eframe::App::raw_input_hook(a.as_mut(), ctx, raw),
             Tab::Graph(_) | Tab::Equation(_) => {}
             Tab::Vershion(a) => a.raw_input_hook(ctx, raw),
@@ -374,14 +376,12 @@ impl Tab {
     /// After another app has drawn, this one must install them again.
     fn context_changed(&mut self, ctx: &egui::Context) {
         match self {
-            Tab::Word(a) => a.context_changed(),
-            Tab::Deck(a) => a.context_changed(),
             Tab::Graph(a) => a.context_changed(ctx),
             Tab::Equation(a) => a.context_changed(ctx),
             Tab::Vershion(a) => a.context_changed(ctx),
-            // GridCraft and PdfCraft keep their font state private: the shell puts their fonts
+            // The official releases keep their font state private: the shell puts their fonts
             // and style back itself (`Look`).
-            Tab::Grid(_) | Tab::Pdf(_) => {}
+            Tab::Word(_) | Tab::Deck(_) | Tab::Grid(_) | Tab::Pdf(_) => {}
         }
     }
 
@@ -651,9 +651,30 @@ fn with_events_withheld<R>(ctx: &egui::Context, withhold: bool, f: impl FnOnce()
     out
 }
 
+/// The selftest's stand-in for a double-click on the selected picture.
+static FORCE_PICTURE_EDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The encoded bytes of the picture selected in a document (the fork had this in the engine).
+fn selected_picture_bytes(s: &wordcraft_engine::Session) -> Option<std::sync::Arc<Vec<u8>>> {
+    let (_, o) = wordcraft_engine::cmd::objects::selected(s)?;
+    let wordcraft_doc::para::InlineObject::Image { media, .. } = o else { return None };
+    s.doc.media.get(&media).cloned()
+}
+
+/// A picture double-clicked in a document this frame, and its bytes (the fork's
+/// `WordApp::take_picture_edit`): the primary button's double-click with a picture selected.
+fn take_picture_edit(a: &wordcraft_ui_egui::WordApp, ctx: &egui::Context) -> Option<std::sync::Arc<Vec<u8>>> {
+    let forced = FORCE_PICTURE_EDIT.swap(false, std::sync::atomic::Ordering::Relaxed);
+    let dbl = ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+    if !(forced || dbl) {
+        return None;
+    }
+    selected_picture_bytes(&a.session)
+}
+
 /// Apps whose own `context_changed` is not available to the shell; it restores their `Look`.
 fn restores_look(kind: Kind) -> bool {
-    matches!(kind, Kind::Grid | Kind::Pdf)
+    matches!(kind, Kind::Word | Kind::Deck | Kind::Grid | Kind::Pdf)
 }
 
 struct Entry {
@@ -2148,7 +2169,7 @@ impl Suite {
         let mut found = None;
         for e in self.entries.iter_mut() {
             if let Tab::Word(a) = &mut e.tab
-                && let Some(bytes) = a.take_picture_edit()
+                && let Some(bytes) = take_picture_edit(a, ctx)
                 && let Some(json) = graphpic::extract(&bytes)
             {
                 found = Some((e.id, e.name.clone(), json));
@@ -2193,7 +2214,7 @@ impl Suite {
             let data = graphpic::base64_encode(&graphpic::embed(&png, &json).unwrap_or(png));
             let e = self.entry_mut(doc_id).ok_or_else(|| "the document was closed".to_string())?;
             let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
-            match ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "picture.replaceImage", "params": {"data": data}})) {
+            match ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "insert.picture", "params": {"data": data}})) {
                 ai::CallResult::Done(r) => r.map(|_| ()).map_err(|e| format!("{e} (select the picture in the document again)")),
                 ai::CallResult::Pending(_) => Err("the document did not answer".into()),
             }
@@ -2218,7 +2239,7 @@ impl Suite {
         };
         let picture = |suite: &mut Suite, id: u64| -> Vec<u8> {
             match suite.entry_mut(id).map(|e| &mut e.tab) {
-                Some(Tab::Word(a)) => wordcraft_engine::cmd::objects::selected_picture_bytes(&a.session).map(|b| b.to_vec()).unwrap_or_default(),
+                Some(Tab::Word(a)) => selected_picture_bytes(&a.session).map(|b| b.to_vec()).unwrap_or_default(),
                 _ => Vec::new(),
             }
         };
@@ -2243,7 +2264,8 @@ impl Suite {
             let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
             let _ = ai::Host::call(&mut host, "engine.execute", serde_json::json!({"command": "select.range", "params": {"anchor": {"story": "body", "path": [0], "off": 0}, "focus": {"story": "body", "path": [0], "off": 3}}}));
             if let Tab::Word(a) = &mut e.tab {
-                a.canvas.picture_edit = true;
+                let _ = a;
+                FORCE_PICTURE_EDIT.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
         let first = picture(self, doc);
@@ -2813,6 +2835,61 @@ impl Suite {
         }
         if self.own_trash.is_empty() {
             self.show_trash = false;
+        }
+    }
+
+    /// The Equations tab's Insert into…: it lists the open Docs and Slides tabs, and an insert it
+    /// asked for goes in here, a real equation in Docs, a picture in Slides (DeckCraft has no
+    /// equation object). The document's tab comes to the front.
+    fn equation_inserts(&mut self, ctx: &egui::Context) {
+        let targets: Vec<equation::Target> = self
+            .entries
+            .iter()
+            .filter_map(|e| match e.kind {
+                Kind::Word => Some(equation::Target { id: e.id, name: e.name.clone(), slides: false }),
+                Kind::Deck => Some(equation::Target { id: e.id, name: e.name.clone(), slides: true }),
+                _ => None,
+            })
+            .collect();
+        let mut asked = Vec::new();
+        for e in &mut self.entries {
+            if let Tab::Equation(a) = &mut e.tab {
+                a.targets = targets.clone();
+                if let Some(i) = a.insert.take() {
+                    asked.push((e.id, i));
+                }
+            }
+        }
+        for (from, ins) in asked {
+            let (to, result) = match ins {
+                equation::Insert::Equation { id, latex } => (
+                    id,
+                    match self.entry_mut(id).map(|e| &mut e.tab) {
+                        Some(Tab::Word(a)) => a.run("insert.equation", serde_json::json!({ "latex": latex })).map(|_| ()).map_err(|e| e.to_string()),
+                        _ => Err("that document was closed".to_string()),
+                    },
+                ),
+                equation::Insert::Picture { id, png } => (
+                    id,
+                    match self.entry_mut(id).map(|e| &mut e.tab) {
+                        Some(Tab::Deck(a)) => a
+                            .run("insert.picture", serde_json::json!({ "data": graphpic::base64_encode(&png), "name": "equation.png" }))
+                            .map(|_| ())
+                            .map_err(|e| e.to_string()),
+                        _ => Err("that presentation was closed".to_string()),
+                    },
+                ),
+            };
+            match result {
+                Ok(()) => self.view = View::Tab(to),
+                Err(e) => {
+                    let now = ctx.input(|i| i.time);
+                    if let Some(Tab::Equation(a)) = self.entry_mut(from).map(|e| &mut e.tab) {
+                        a.failed(format!("Couldn't insert: {e}"), now);
+                    }
+                }
+            }
+            ctx.request_repaint();
         }
     }
 
@@ -3478,8 +3555,15 @@ fn ai_app(kind: Kind) -> ai::App {
 }
 
 impl eframe::App for Suite {
-    // TODO(official releases): WordCraft 0.18 adds `Session::finish_recovery()`; call it for each
-    // Word tab in `on_exit` so a save just before quitting is not offered back next launch.
+    /// Last chance before the process ends: WordCraft finishes writing (or clearing) its recovery
+    /// copies, so a document saved just before quitting is not offered back next launch.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        for e in &mut self.entries {
+            if let Tab::Word(a) = &mut e.tab {
+                a.session.finish_recovery();
+            }
+        }
+    }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let mut shot_tab = None;
@@ -3527,7 +3611,19 @@ impl eframe::App for Suite {
             if *n == 8 && std::env::var_os("OFFICECRAFT_SHOT_EQUATION").is_some() {
                 for e in self.entries.iter_mut() {
                     if let Tab::Word(a) = &mut e.tab {
-                        let _ = a.run("insert.equation", serde_json::json!({"linear": "x=(-b+-sqrt(b^2-4ac))/2a"}));
+                        let r = a.run("insert.equation", serde_json::json!({"linear": "x=(-b+-sqrt(b^2-4ac))/2a"}));
+                        eprintln!("shot-equation: docs insert.equation -> {:?}", r.map(|_| "ok"));
+                    }
+                    // Prototype (official releases): DeckCraft v0.18.1 has no `insert.equation`, so
+                    // the Equations tab's picture goes in as a PNG.
+                    if let Tab::Deck(a) = &mut e.tab
+                        && std::env::var("OFFICECRAFT_SHOT_EQUATION").as_deref() == Ok("picture")
+                    {
+                        let m = equashion_egui::equashion_math::from_linear("x=(-b+-sqrt(b^2-4ac))/2a");
+                        let png = equation::png_for(&m);
+                        let r = a.run("insert.picture", serde_json::json!({"data": graphpic::base64_encode(&png), "name": "equation.png"}));
+                        eprintln!("shot-equation: slides insert.picture -> {:?}", r.map(|_| "ok"));
+                        continue;
                     }
                     if let Tab::Deck(a) = &mut e.tab {
                         // An existing equation, edited where it sits.
@@ -3558,9 +3654,13 @@ impl eframe::App for Suite {
             let settled = if self.tiles_test.is_some() { 420 } else { 20 };
             if *n >= settled && !waiting && !self.shot_sent {
                 self.shot_sent = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                let c = ctx.clone();
+                ctx.request_screenshot(move |img| {
+                    c.data_mut(|d| d.insert_temp(egui::Id::new("officecraft-shot"), img));
+                    c.request_repaint();
+                });
             }
-            let img = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
+            let img = ctx.data_mut(|d| d.remove_temp::<std::sync::Arc<egui::ColorImage>>(egui::Id::new("officecraft-shot")));
             if let Some(img) = img {
                 let [w, h] = img.size;
                 let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
@@ -3805,6 +3905,7 @@ impl eframe::App for Suite {
             e.chat.poll(&mut host, app, &self.ai_cfg, ctx);
         }
         self.open_requested_decks(ctx);
+        self.equation_inserts(ctx);
         self.make_requested_graphs(ctx);
         self.open_double_clicked_graphs(ctx);
         // `OFFICECRAFT_AUTOSEND=<prompt>`: once a tab is open, show its assistant and send the prompt

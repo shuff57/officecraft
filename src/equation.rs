@@ -59,18 +59,39 @@ impl Export {
     }
 }
 
+/// An open document the equation can go into: (tab id, tab name, kind).
+#[derive(Clone)]
+pub struct Target {
+    pub id: u64,
+    pub name: String,
+    /// Docs take a real, editable equation; Slides (DeckCraft has no equation object) a picture.
+    pub slides: bool,
+}
+
+/// What the shell should put into tab `id`.
+pub enum Insert {
+    /// LaTeX for WordCraft's `insert.equation`.
+    Equation { id: u64, latex: String },
+    /// A PNG for `insert.picture`.
+    Picture { id: u64, png: Vec<u8> },
+}
+
 /// The Equations tab.
 pub struct EquationApp {
     editor: EquationEditor,
     fonts: Arc<FontDb>,
     /// What the last Copy or Save said, and when (egui time).
     note: Option<(String, f64)>,
+    /// Docs and Slides tabs open now, set by the shell each frame.
+    pub targets: Vec<Target>,
+    /// An Insert into… the user chose, for the shell to carry out.
+    pub insert: Option<Insert>,
 }
 
 impl EquationApp {
     pub fn new() -> Self {
         let editor = EquationEditor::with_linear(r"x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}").id_salt("officecraft-equations").font_size(34.0).canvas_height(240.0);
-        EquationApp { editor, fonts: bundled_fonts(), note: None }
+        EquationApp { editor, fonts: bundled_fonts(), note: None, targets: Vec::new(), insert: None }
     }
 
     /// Another app has replaced the shared egui fonts and style: take the built-in ones back, so
@@ -95,6 +116,25 @@ impl EquationApp {
                 // The Copy and Save buttons sit under the editor, with what the last one did.
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
+                    // Straight into an open document: Docs get an equation they can edit, Slides a
+                    // picture of it.
+                    let mut chosen = None;
+                    ui.add_enabled_ui(!self.targets.is_empty(), |ui| {
+                        ui.menu_button("Insert into…", |ui| {
+                            for t in &self.targets {
+                                let label = if t.slides { format!("{} (as a picture)", t.name) } else { t.name.clone() };
+                                if ui.button(label).clicked() {
+                                    chosen = Some(t.clone());
+                                    ui.close();
+                                }
+                            }
+                        })
+                        .response
+                        .on_disabled_hover_text("Open a Docs or Slides tab to insert into");
+                    });
+                    if let Some(t) = chosen {
+                        self.insert_into(&t, now);
+                    }
                     for kind in Export::ALL {
                         if ui.button(kind.label()).on_hover_text(kind.hint()).clicked() {
                             self.export(ui.ctx(), kind, now);
@@ -106,6 +146,22 @@ impl EquationApp {
                 }
             });
         });
+    }
+
+    fn insert_into(&mut self, t: &Target, now: f64) {
+        let m = self.editor.math().clone();
+        let latex = to_latex(&m);
+        if latex.trim().is_empty() {
+            self.note = Some(("Nothing to insert: the equation is empty.".into(), now));
+            return;
+        }
+        self.insert = Some(if t.slides { Insert::Picture { id: t.id, png: png_bytes(&m, &self.fonts) } } else { Insert::Equation { id: t.id, latex } });
+        self.note = Some((format!("Inserted into {}.", t.name), now));
+    }
+
+    /// The shell could not insert: say why under the buttons.
+    pub fn failed(&mut self, why: String, now: f64) {
+        self.note = Some((why, now));
     }
 
     fn export(&mut self, ctx: &egui::Context, kind: Export, now: f64) {
@@ -128,6 +184,11 @@ fn copy(ctx: &egui::Context, text: String, what: &str) -> String {
     }
     ctx.copy_text(text);
     format!("Copied {what}.")
+}
+
+/// The Save image… PNG for `m`, for inserting into an app that has no equation object.
+pub fn png_for(m: &Math) -> Vec<u8> {
+    png_bytes(m, &bundled_fonts())
 }
 
 /// The equation as an SVG document, black ink.

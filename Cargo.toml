@@ -11,30 +11,30 @@ description = "One tabbed window for WordCraft, GridCraft, DeckCraft, PdfCraft"
 # shuff57 forks (they carry `context_changed`); GridCraft and PdfCraft from the org repos. To build
 # against sibling checkouts instead, run scripts/use-local-siblings.sh (writes a git-ignored
 # .cargo/config.toml with [patch] entries).
-wordcraft-doc = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
-wordcraft-engine = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
-wordcraft-ui-egui = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
-wordcraft-mcp = { git = "https://github.com/shuff57/wordcraft", branch = "equashion-editor" }
-gridcraft-engine = { git = "https://github.com/storytold/gridcraft" }
-gridcraft-ui-egui = { git = "https://github.com/storytold/gridcraft" }
-gridcraft-mcp = { git = "https://github.com/storytold/gridcraft" }
-deckcraft-engine = { git = "https://github.com/shuff57/deckcraft", branch = "equashion-editor" }
-deckcraft-ui-egui = { git = "https://github.com/shuff57/deckcraft", branch = "equashion-editor" }
-deckcraft-mcp = { git = "https://github.com/shuff57/deckcraft", branch = "equashion-editor" }
-pdfcraft-ui-egui = { git = "https://github.com/storytold/pdfcraft" }
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
+wordcraft-doc = { git = "https://github.com/storytold/wordcraft", tag = "v0.18.1" }
+wordcraft-engine = { git = "https://github.com/storytold/wordcraft", tag = "v0.18.1" }
+wordcraft-ui-egui = { git = "https://github.com/storytold/wordcraft", tag = "v0.18.1" }
+wordcraft-mcp = { git = "https://github.com/storytold/wordcraft", tag = "v0.18.1" }
+gridcraft-engine = { git = "https://github.com/storytold/gridcraft", tag = "v0.19.1" }
+gridcraft-ui-egui = { git = "https://github.com/storytold/gridcraft", tag = "v0.19.1" }
+gridcraft-mcp = { git = "https://github.com/storytold/gridcraft", tag = "v0.19.1" }
+deckcraft-engine = { git = "https://github.com/storytold/deckcraft", tag = "v0.18.1" }
+deckcraft-ui-egui = { git = "https://github.com/storytold/deckcraft", tag = "v0.18.1" }
+deckcraft-mcp = { git = "https://github.com/storytold/deckcraft", tag = "v0.18.1" }
+pdfcraft-ui-egui = { git = "https://github.com/storytold/pdfcraft", tag = "v0.22.0" }
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
 # viSHual, embedded like the other apps: its egui UI crate (the Graph tab) and its assistant tool set.
-vishual-ui-egui = { git = "https://github.com/shuff57/viSHual" }
-vishual-mcp = { git = "https://github.com/shuff57/viSHual" }
+vishual-ui-egui = { path = "../viSHual-egui037/crates/ui-egui" }
+vishual-mcp = { path = "../viSHual-egui037/crates/mcp" }
 # equaSHion's editor widget and its export (the Equations tab). The revision is the one WordCraft
 # and DeckCraft pin, so one copy of each crate is built; bump the three together.
-equashion-egui = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54" }
-equashion-layout = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54", features = ["extra-fonts"] }
-equashion-render = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54", features = ["raster", "extra-fonts"] }
+equashion-egui = { git = "https://github.com/shuff57/equaSHion", rev = "1df2f69" }
+equashion-layout = { git = "https://github.com/shuff57/equaSHion", rev = "1df2f69", features = ["extra-fonts"] }
+equashion-render = { git = "https://github.com/shuff57/equaSHion", rev = "1df2f69", features = ["raster", "extra-fonts"] }
 # verSHion's UI crate: the VerSHion tab runs the standalone app's own screens.
-vershion = { path = "../verSHion" }
+vershion = { path = "../verSHion-egui037" }
 png = "0.18"
-egui = "0.36"
+egui = "0.37"
 rfd = "0.17"
 log = "0.4"
 serde_json = "1"
@@ -42,7 +42,7 @@ serde_json = "1"
 web-time = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-eframe = { version = "0.36", default-features = false, features = ["wayland", "x11"] }
+eframe = { version = "0.37", default-features = false, features = ["wayland", "x11"] }
 # The assistant's blocking HTTP client; the browser build uses `fetch` instead.
 ureq = "3"
 # Move to Trash on Home (freedesktop trash, Recycle Bin, macOS Trash).
@@ -58,15 +58,28 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "HtmlIFrameElement", "Blob", "BlobPropertyBag", "Url", "Location", "CssStyleDeclaration", "Event", "EventTarget", "BeforeUnloadEvent", "Storage", "Headers", "Request", "RequestInit", "RequestMode", "Response", "AbortSignal", "ReadableStream", "ReadableStreamDefaultReader", "Clipboard", "ClipboardItem", "Navigator", "Performance", "MediaQueryList", "MessageEvent"] }
 
-# pdfcraft builds against its vendored forks; cargo ignores [patch] from dependencies, so the
-# suite shell repeats them or pdfcraft-render sees stock hayro and fails to compile.
+# Pins copied from the release tags' own root Cargo.toml (wordcraft/deckcraft v0.18.1, gridcraft
+# v0.19.1, pdfcraft v0.22.0): cargo ignores [patch] in dependencies, so the shell repeats them.
 [patch.crates-io]
-# craft-pdf (shared PDF writer) refuses to build without the patched krilla at the workspace root.
-krilla = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8", version = "=0.8.2" }
-hayro-interpret = { git = "https://github.com/storytold/pdfcraft" }
-hayro = { git = "https://github.com/storytold/pdfcraft" }
-hayro-syntax = { git = "https://github.com/storytold/pdfcraft" }
-hayro-jbig2 = { git = "https://github.com/storytold/pdfcraft" }
-lopdf = { git = "https://github.com/storytold/pdfcraft" }
-winit = { git = "https://github.com/storytold/pdfcraft" }
-egui-wgpu = { git = "https://github.com/storytold/pdfcraft" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "6e03f65bf45181db77ba6229716e6624db9eb25b", version = "=0.8.2" }
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-cmap = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-postscript = { git = "https://github.com/storytold/craft-libs", rev = "e7873217287876f76a045550369c90a541693c33" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+lopdf = { git = "https://github.com/storytold/pdfcraft", tag = "v0.22.0" }
+vello_common = { git = "https://github.com/storytold/pdfcraft", tag = "v0.22.0" }
+vello_cpu = { git = "https://github.com/storytold/pdfcraft", tag = "v0.22.0" }
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+egui_glow = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+egui_extras = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
