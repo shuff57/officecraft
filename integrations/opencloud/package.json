@@ -1,0 +1,19 @@
+{
+  "name": "officecraft",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open and edit documents, spreadsheets, presentations and PDFs in OfficeCraft",
+  "license": "AGPL-3.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm vite build",
+    "build:w": "pnpm vite build --watch --mode development",
+    "check:types": "vue-tsc --noEmit"
+  },
+  "devDependencies": {
+    "@opencloud-eu/web-client": "^6.0.0",
+    "@opencloud-eu/web-pkg": "^6.0.0",
+    "vue": "^3.4.21",
+    "vue3-gettext": "^4.0.0"
+  }
+}

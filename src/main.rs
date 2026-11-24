@@ -19,6 +19,8 @@ mod platform;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
 #[cfg(target_arch = "wasm32")]
+mod host;
+#[cfg(target_arch = "wasm32")]
 mod web;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -170,7 +172,16 @@ impl Tab {
                 Tab::Grid(Box::new(gridcraft_ui_egui::SheetApp::new(session, grid_services())))
             }
             Kind::Deck => Tab::Deck(Box::new(deckcraft_ui_egui::SlideApp::new(deckcraft_engine::Session::new(), deck_services()))),
-            Kind::Pdf => Tab::Pdf(Box::new(pdfcraft_ui_egui::PdfCraftApp::new())),
+            Kind::Pdf => {
+                #[allow(unused_mut)]
+                let mut app = pdfcraft_ui_egui::PdfCraftApp::new();
+                // Inside a host page, Save hands the PDF to the page instead of downloading it.
+                #[cfg(target_arch = "wasm32")]
+                if host::active() {
+                    app.host_save = Some(Box::new(host::save));
+                }
+                Tab::Pdf(Box::new(app))
+            }
             Kind::Graph => Tab::Graph(Box::new(vishual_ui_egui::VishualApp::new(graph_services()))),
             Kind::Equation => Tab::Equation(Box::new(equation::EquationApp::new())),
             // The app installs its own fonts when the tab is activated (`context_changed`).
@@ -2639,7 +2650,25 @@ impl eframe::App for Suite {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            web::set_dirty(self.entries.iter().any(|e| e.tab.is_dirty()));
+            let dirty = self.entries.iter().any(|e| e.tab.is_dirty());
+            web::set_dirty(dirty);
+            if host::active() {
+                host::report_dirty(dirty);
+                for (name, bytes) in host::take_arrived() {
+                    // An empty file is one the host just created ("New document" in OpenCloud):
+                    // a blank tab of its kind, not a parse error.
+                    match kind_for(&name) {
+                        Some(kind) if bytes.is_empty() => {
+                            let id = self.push_tab(kind, Tab::create(kind));
+                            if let Some(e) = self.entry_mut(id) {
+                                e.name = name;
+                            }
+                            ctx.request_repaint();
+                        }
+                        _ => self.open_bytes(ctx, name, bytes),
+                    }
+                }
+            }
             let arrived = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(|e| e.into_inner()));
             for (name, bytes) in arrived {
                 self.open_bytes(ctx, name, bytes);

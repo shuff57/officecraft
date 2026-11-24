@@ -67,7 +67,10 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
-        if let Err(e) = guard_unload() {
+        // `?host=parent`: a same-origin page (the OpenCloud extension) sends the file to edit and
+        // stores what is saved. It guards leaving the page itself.
+        let hosted = crate::host::connect(Rc::new(repaint));
+        if !hosted && let Err(e) = guard_unload() {
             log::error!("no unsaved-changes guard: {e}");
         }
         // The Graph tab (viSHual) draws through its own WebGL2 renderer, which has to exist before
@@ -117,10 +120,17 @@ pub fn start() {
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => {
-                    finish_loader_cycle().await;
+                    if hosted {
+                        crate::host::post_ready();
+                    } else {
+                        finish_loader_cycle().await;
+                    }
                     el.remove();
                 }
-                Err(e) => el.set_inner_html(&format!("<p>OfficeCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
+                Err(e) => {
+                    crate::host::post_failed(&format!("{e:?}"));
+                    el.set_inner_html(&format!("<p>OfficeCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>"))
+                }
             }
         }
     });
@@ -560,6 +570,10 @@ fn pick_doc(description: &'static str, exts: &'static [&'static str], multiple: 
 /// Save: writes back to the file the user opened through the picker when its handle is held,
 /// otherwise (or if the write is refused) downloads a copy.
 fn save_file(path: &str, bytes: &[u8]) -> Result<(), String> {
+    // Inside a host page (`?host=parent`) the page keeps the files: every save goes to it.
+    if crate::host::active() {
+        return crate::host::save(path, bytes, false);
+    }
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let Some(handle) = HANDLES.with(|m| m.borrow().get(&name).cloned().flatten()) else {
         return download(path, bytes);
