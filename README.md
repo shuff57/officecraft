@@ -37,8 +37,10 @@ This installs `~/.local/bin/officecraft`, a desktop entry and the icons. `PREFIX
 
 ### Building against local checkouts
 
-OfficeCraft pulls the four apps from the `storytold` repositories. To build against sibling
-checkouts (`../wordcraft`, `../gridcraft`, `../deckcraft`, `../pdfcraft`) instead:
+OfficeCraft builds the four apps from their official `storytold` release tags (WordCraft and
+DeckCraft v0.18.1, GridCraft v0.19.1, PdfCraft v0.22.0, all egui 0.37); viSHual and verSHion come
+from their `v0.2.0-egui037` tags. To build against sibling checkouts (`../wordcraft`,
+`../gridcraft`, `../deckcraft`, `../pdfcraft`) instead:
 
 ```sh
 ./install.sh --local
@@ -46,9 +48,12 @@ checkouts (`../wordcraft`, `../gridcraft`, `../deckcraft`, `../pdfcraft`) instea
 
 or run `scripts/use-local-siblings.sh` once and use plain `cargo build --release`.
 
-> OfficeCraft calls `context_changed()` on each app's `ui-egui` crate. Until that lands in the
-> `gridcraft` and `pdfcraft` main branches, a build from the org repos needs a checkout (or fork)
-> that has it; point `sources` (below) at one.
+Sibling checkouts must be on egui 0.37 like the releases. The apps share one egui context; the
+shell puts each app's fonts and style back when its tab comes to the front, so no app needs a
+patch for that.
+
+The Equations tab's **Insert into…** puts an equation into an open Docs tab as a real, editable
+equation, and into a Slides tab as a picture (DeckCraft has no equation object).
 
 ## Updates
 

@@ -24,15 +24,15 @@ deckcraft-mcp = { git = "https://github.com/storytold/deckcraft", tag = "v0.18.1
 pdfcraft-ui-egui = { git = "https://github.com/storytold/pdfcraft", tag = "v0.22.0" }
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
 # viSHual, embedded like the other apps: its egui UI crate (the Graph tab) and its assistant tool set.
-vishual-ui-egui = { path = "../viSHual-egui037/crates/ui-egui" }
-vishual-mcp = { path = "../viSHual-egui037/crates/mcp" }
+vishual-ui-egui = { git = "https://github.com/shuff57/viSHual", tag = "v0.2.0-egui037" }
+vishual-mcp = { git = "https://github.com/shuff57/viSHual", tag = "v0.2.0-egui037" }
 # equaSHion's editor widget and its export (the Equations tab). The revision is the one WordCraft
 # and DeckCraft pin, so one copy of each crate is built; bump the three together.
 equashion-egui = { git = "https://github.com/shuff57/equaSHion", rev = "1df2f69" }
 equashion-layout = { git = "https://github.com/shuff57/equaSHion", rev = "1df2f69", features = ["extra-fonts"] }
 equashion-render = { git = "https://github.com/shuff57/equaSHion", rev = "1df2f69", features = ["raster", "extra-fonts"] }
 # verSHion's UI crate: the VerSHion tab runs the standalone app's own screens.
-vershion = { path = "../verSHion-egui037" }
+vershion = { git = "https://github.com/shuff57/verSHion", tag = "v0.2.0-egui037" }
 png = "0.18"
 egui = "0.37"
 rfd = "0.17"
@@ -80,6 +80,5 @@ egui-winit = { git = "https://github.com/storytold/egui.git", rev = "725a39fca94
 egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
 egui_glow = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
 egui_extras = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
-egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
 eframe = { git = "https://github.com/storytold/egui.git", rev = "725a39fca940f77149ffbb9c58eef405a16997bc" }
 winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
