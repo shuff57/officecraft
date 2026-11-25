@@ -311,7 +311,7 @@ fn kind_for(path: &str) -> Option<Kind> {
     let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "docx" | "docm" | "dotx" | "odt" | "rtf" | "txt" | "md" | "html" | "htm" => Some(Kind::Word),
-        "xlsx" | "xlsm" | "csv" | "tsv" => Some(Kind::Grid),
+        "xlsx" | "xlsm" | "ods" | "csv" | "tsv" => Some(Kind::Grid),
         "pptx" | "potx" | "ppsx" | "deckcraft" => Some(Kind::Deck),
         "pdf" => Some(Kind::Pdf),
         "vshl" | "vishual" => Some(Kind::Graph),
@@ -321,7 +321,7 @@ fn kind_for(path: &str) -> Option<Kind> {
 }
 
 const OPEN_EXTS: &[&str] = &[
-    "docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "xlsx", "xlsm", "csv", "tsv", "pptx", "potx", "ppsx", "deckcraft", "pdf", "vshl", "vishual",
+    "docx", "docm", "dotx", "odt", "rtf", "txt", "md", "html", "htm", "xlsx", "xlsm", "ods", "csv", "tsv", "pptx", "potx", "ppsx", "deckcraft", "pdf", "vshl", "vishual",
     "gift", "qti",
 ];
 const MAX_RECENT: usize = 12;
