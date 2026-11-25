@@ -13,6 +13,7 @@ use web::{deck_services, grid_services, word_services};
 type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
 mod ai;
+mod convert;
 mod equation;
 mod graphpic;
 mod platform;
@@ -677,6 +678,17 @@ fn restores_look(kind: Kind) -> bool {
     matches!(kind, Kind::Word | Kind::Deck | Kind::Grid | Kind::Pdf)
 }
 
+/// Where Send to… puts a document.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SendTo {
+    /// A new tab of this app.
+    New(Kind),
+    /// This open tab, at its cursor (Docs) or on a new slide (Slides).
+    Into(u64),
+    /// A PDF the user names, opened in a PDF tab.
+    Pdf,
+}
+
 struct Entry {
     id: u64,
     kind: Kind,
@@ -754,6 +766,11 @@ fn canonical_path(path: &str) -> String {
 
 fn file_name_of(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string())
+}
+
+/// `n` and its noun: "1 slide", "3 slides".
+fn plural(n: u64, noun: &str) -> String {
+    if n == 1 { format!("1 {noun}") } else { format!("{n} {noun}s") }
 }
 
 /// One level of folder `dir` (desktop): its subfolders, then the files a Craft app opens,
@@ -1336,6 +1353,13 @@ struct Suite {
     tabs_overflow: bool,
     /// The last Home file operation that went through ("Moved … to the Trash"), shown in teal.
     status: Option<String>,
+    /// A short message over any view (Send to… results): text, whether it is an error, and when
+    /// it was shown (egui time).
+    toast: Option<(String, bool, f64)>,
+    /// New from prompt on Home: the description being typed, and the app chosen for it (`None`:
+    /// worked out from the words, `kind_for_prompt`).
+    make_prompt: String,
+    make_kind: Option<Kind>,
     /// The window had keyboard focus last frame (desktop: refresh Home when it comes back).
     focused: bool,
     /// Recent paths and their rows, read again only when the list changes.
@@ -1438,7 +1462,7 @@ impl Suite {
             Some(_) if recent.is_empty() => (Some(0), Vec::new()),
             _ => (None, Vec::new()),
         };
-        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, listing_seq: std::collections::HashMap::new(), listing_state: Listing::Ready, file_op_focused: false, #[cfg(not(target_arch = "wasm32"))] purge_confirm: None, leaving: false, #[cfg(not(target_arch = "wasm32"))] word_probe: None, tab_in_view: None, tabs_overflow: false, status: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
+        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, listing_seq: std::collections::HashMap::new(), listing_state: Listing::Ready, file_op_focused: false, #[cfg(not(target_arch = "wasm32"))] purge_confirm: None, leaving: false, #[cfg(not(target_arch = "wasm32"))] word_probe: None, tab_in_view: None, tabs_overflow: false, status: None, toast: None, make_prompt: String::new(), make_kind: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite
     }
 
@@ -2230,6 +2254,114 @@ impl Suite {
         ctx.request_repaint();
     }
 
+    /// `OFFICECRAFT_SELFTEST_SENDTO=<dir>`: every Send to… path once, checked through the apps'
+    /// own inspection, with the PDFs written to `dir`. Exits 0 when all of them hold.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn send_selftest(&mut self, ctx: &egui::Context, dir: &str) {
+        let mut bad: Vec<String> = Vec::new();
+        let mut check = |ok: bool, what: String| {
+            eprintln!("sendto-selftest: {} {what}", if ok { "ok  " } else { "FAIL" });
+            if !ok {
+                bad.push(what);
+            }
+        };
+        let blocks = |suite: &mut Suite, id: u64| -> Vec<serde_json::Value> {
+            suite.tab_call(ctx, id, "document.inspect", serde_json::json!({ "text": true })).ok().and_then(|v| v.get("blocks").and_then(serde_json::Value::as_array).cloned()).unwrap_or_default()
+        };
+        let slide_titles = |suite: &mut Suite, id: u64| -> Vec<String> {
+            suite
+                .tab_call(ctx, id, "document.inspect", serde_json::json!({}))
+                .ok()
+                .and_then(|v| v.get("slides").and_then(serde_json::Value::as_array).map(|a| a.iter().map(|s| s.get("title").and_then(serde_json::Value::as_str).unwrap_or("").to_string()).collect()))
+                .unwrap_or_default()
+        };
+        // Docs → Slides.
+        let doc = self.new_tab(Kind::Word);
+        let outline = serde_json::json!({"blocks": [
+            {"text": "Field Trip", "style": "Title"},
+            {"text": "Where we go", "style": "Heading 1"},
+            {"text": "The science museum downtown.", "style": "Normal"},
+            {"text": "Bus leaves at 8", "style": "Bullet"},
+            {"text": "Cost", "style": "Heading 1"},
+            {"text": "Twelve dollars a ticket.", "style": "Normal"},
+        ]});
+        if let Some(e) = self.entry_mut(doc) {
+            let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+            if let Err(er) = ai::insert_blocks(&mut host, &outline) {
+                check(false, format!("writing the test document: {er}"));
+            }
+        }
+        let n_before = self.entries.len();
+        let r = self.convert_tab(ctx, doc, SendTo::New(Kind::Deck));
+        let deck = self.entries.last().map(|e| e.id).unwrap_or(0);
+        let titles = slide_titles(self, deck);
+        check(r.is_ok() && self.entries.len() == n_before + 1, format!("docs → new slides: {r:?}"));
+        check(titles == ["Field Trip", "Where we go", "Cost"], format!("deck titles {titles:?}"));
+        check(self.entries.iter().find(|e| e.id == deck).is_some_and(|e| e.name == "Field Trip"), "the new deck is named after the title".into());
+        // Docs → that open deck: three more slides.
+        let r = self.convert_tab(ctx, doc, SendTo::Into(deck));
+        let n = slide_titles(self, deck).len();
+        check(r.is_ok() && n == 5, format!("docs → open slides adds two (no second title slide): {r:?}, {n} slides"));
+        // Slides → Docs.
+        let r = self.convert_tab(ctx, deck, SendTo::New(Kind::Word));
+        let back = self.entries.last().map(|e| e.id).unwrap_or(0);
+        let b = blocks(self, back);
+        let styled: Vec<(String, String)> = b.iter().map(|x| (x["style"].as_str().unwrap_or("").to_string(), x["text"].as_str().unwrap_or("").to_string())).collect();
+        eprintln!("sendto-selftest: slides → docs gave {styled:?}");
+        check(r.is_ok() && styled.iter().any(|(s, t)| s.starts_with("Heading") && t == "Where we go"), format!("slides → new docs has the heading: {r:?}"));
+        check(styled.iter().any(|(_, t)| t == "Bus leaves at 8"), "slides → new docs has the bullet".into());
+        // Sheets → Docs and Slides, as tables.
+        let grid = self.push_tab(Kind::Grid, Tab::create(Kind::Grid));
+        let r = self.tab_run(ctx, grid, "edit.paste", serde_json::json!({ "at": "A1", "text": "Item\tPrice\nTicket\t12\nLunch\t8" }));
+        check(r.is_ok(), format!("filling the test sheet: {r:?}"));
+        let r = self.convert_tab(ctx, grid, SendTo::New(Kind::Word));
+        let gdoc = self.entries.last().map(|e| e.id).unwrap_or(0);
+        let table = blocks(self, gdoc).into_iter().find(|x| x["type"] == "table");
+        check(r.is_ok() && table.as_ref().is_some_and(|t| t["rows"] == 3 && t["cols"] == 2), format!("sheets → new docs as a 3×2 table: {r:?} {table:?}"));
+        let r = self.convert_tab(ctx, grid, SendTo::New(Kind::Deck));
+        let gdeck = self.entries.last().map(|e| e.id).unwrap_or(0);
+        let slide = self.tab_run(ctx, gdeck, "slide.inspect", serde_json::json!({ "index": 0 })).unwrap_or_default();
+        let has_table = slide.get("shapes").and_then(serde_json::Value::as_array).is_some_and(|a| a.iter().any(|s| s.get("table").is_some()));
+        eprintln!("sendto-selftest: sheets → slides slide 0: {}", slide.to_string().chars().take(600).collect::<String>());
+        check(r.is_ok() && has_table && slide_titles(self, gdeck).len() == 1, format!("sheets → new slides as one table slide: {r:?}"));
+        // An empty sheet opens nothing.
+        let empty = self.push_tab(Kind::Grid, Tab::create(Kind::Grid));
+        let n_before = self.entries.len();
+        let r = self.convert_tab(ctx, empty, SendTo::New(Kind::Word));
+        check(r.is_err() && self.entries.len() == n_before, format!("an empty sheet is refused without a tab: {r:?}"));
+        // Graph → Docs and Slides, as a picture.
+        let graph = self.new_tab(Kind::Graph);
+        if let Some(Tab::Graph(a)) = self.entry_mut(graph).map(|e| &mut e.tab) {
+            let _ = a.control("engine.execute", serde_json::json!({"command": "addItem", "params": {"id": "a1", "kind": "equation", "latex": "y=x^2"}}));
+        }
+        let r = self.convert_tab(ctx, graph, SendTo::New(Kind::Word));
+        let pics = match self.entries.last().map(|e| &e.tab) {
+            Some(Tab::Word(a)) => a.session.doc.media.len(),
+            _ => 0,
+        };
+        check(r.is_ok() && pics == 1, format!("graph → new docs: {r:?}, {pics} picture(s)"));
+        let r = self.convert_tab(ctx, graph, SendTo::New(Kind::Deck));
+        let gd = self.entries.last().map(|e| e.id).unwrap_or(0);
+        let slide = self.tab_run(ctx, gd, "slide.inspect", serde_json::json!({ "index": 0 })).unwrap_or_default();
+        let pic = slide.get("shapes").and_then(serde_json::Value::as_array).is_some_and(|a| a.iter().any(|s| s.get("kind").and_then(serde_json::Value::as_str).is_some_and(|k| k.to_ascii_lowercase().contains("pic"))));
+        check(r.is_ok() && pic, format!("graph → new slides: {r:?} {}", slide.to_string().chars().take(300).collect::<String>()));
+        // PDFs of each, opened in PDF tabs; the source keeps its own path.
+        for (id, what) in [(doc, "docs"), (grid, "sheets"), (deck, "slides")] {
+            let path = format!("{dir}/{what}.pdf");
+            let _ = std::fs::remove_file(&path);
+            let r = self.send_pdf(ctx, id, &path);
+            let head = std::fs::read(&path).map(|b| b.starts_with(b"%PDF-")).unwrap_or(false);
+            let opened = self.entries.iter().any(|e| e.kind == Kind::Pdf && e.path.as_deref() == Some(canonical_path(&path).as_str()));
+            let kept = self.entries.iter().find(|e| e.id == id).is_some_and(|e| e.tab.current_path().is_none());
+            check(r.is_ok() && head && opened && kept, format!("{what} → pdf: {r:?}, file {head}, tab {opened}, source untouched {kept}"));
+            // Again onto the PDF now open: refused.
+            let again = self.send_pdf(ctx, id, &path);
+            check(again.is_err(), format!("{what} → the open pdf again is refused: {again:?}"));
+        }
+        eprintln!("sendto-selftest: {}", if bad.is_empty() { "passed".to_string() } else { format!("FAILED {}", bad.len()) });
+        std::process::exit(if bad.is_empty() { 0 } else { 1 });
+    }
+
     /// `OFFICECRAFT_SELFTEST_GRAPH=<dir>`: draw a graph into a new document, double-click the
     /// picture, edit the graph in its tab, update the picture, and write both PNGs to `dir`.
     fn graph_selftest(&mut self, ctx: &egui::Context, dir: &str) {
@@ -2841,6 +2973,381 @@ impl Suite {
     /// The Equations tab's Insert into…: it lists the open Docs and Slides tabs, and an insert it
     /// asked for goes in here, a real equation in Docs, a picture in Slides (DeckCraft has no
     /// equation object). The document's tab comes to the front.
+    /// One control call on tab `id`, through the same surface the assistant uses.
+    fn tab_call(&mut self, ctx: &egui::Context, id: u64, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+        let e = self.entry_mut(id).ok_or_else(|| "that tab was closed".to_string())?;
+        let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+        match ai::Host::call(&mut host, method, params) {
+            ai::CallResult::Done(r) => r,
+            ai::CallResult::Pending(_) => Err("the app did not answer".to_string()),
+        }
+    }
+
+    /// One app command on tab `id` (`engine.execute`).
+    fn tab_run(&mut self, ctx: &egui::Context, id: u64, command: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+        self.tab_call(ctx, id, "engine.execute", serde_json::json!({ "command": command, "params": params }))
+    }
+
+    /// Where tab `from` can be sent, as (menu label, destination): a new tab of another app, an
+    /// open one, or a PDF.
+    fn send_targets(entries: &[Entry], from: u64) -> Vec<(String, SendTo)> {
+        let Some(src) = entries.iter().find(|e| e.id == from) else { return Vec::new() };
+        let into = |kind: Kind, what: &str| -> Vec<(String, SendTo)> {
+            entries.iter().filter(|e| e.kind == kind && e.id != from).map(|e| (format!("{}: {what}", e.name), SendTo::Into(e.id))).collect()
+        };
+        let mut out: Vec<(String, SendTo)> = Vec::new();
+        match src.kind {
+            Kind::Word => {
+                out.push(("New Slides from the outline".into(), SendTo::New(Kind::Deck)));
+                out.extend(into(Kind::Deck, "add the outline as slides"));
+            }
+            Kind::Grid => {
+                out.push(("New Docs with the table".into(), SendTo::New(Kind::Word)));
+                out.extend(into(Kind::Word, "insert the table"));
+                out.push(("New Slides with the table".into(), SendTo::New(Kind::Deck)));
+                out.extend(into(Kind::Deck, "add a slide with the table"));
+            }
+            Kind::Deck => {
+                out.push(("New Docs from the slides".into(), SendTo::New(Kind::Word)));
+                out.extend(into(Kind::Word, "insert the slides' text"));
+            }
+            Kind::Graph => {
+                out.push(("New Docs with the graph".into(), SendTo::New(Kind::Word)));
+                out.extend(into(Kind::Word, "insert the graph"));
+                out.push(("New Slides with the graph".into(), SendTo::New(Kind::Deck)));
+                out.extend(into(Kind::Deck, "add a slide with the graph"));
+            }
+            _ => {}
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if matches!(src.kind, Kind::Word | Kind::Grid | Kind::Deck) {
+            out.push(("PDF…".into(), SendTo::Pdf));
+        }
+        out
+    }
+
+    /// Send to…: makes tab `from`'s document into `to` and shows the result, or says why not.
+    fn send_to(&mut self, ctx: &egui::Context, from: u64, to: SendTo) {
+        let now = ctx.input(|i| i.time);
+        match self.convert_tab(ctx, from, to) {
+            Ok(None) => {}
+            Ok(Some(said)) => self.toast = Some((said, false, now)),
+            Err(e) => self.toast = Some((format!("Couldn't send: {e}"), true, now)),
+        }
+        ctx.request_repaint();
+    }
+
+    /// New from prompt, on Home: a description, the app for it, and Make. `Some` when Make (or
+    /// Enter) was pressed with something written.
+    fn make_from_prompt_ui(&mut self, ui: &mut egui::Ui) -> Option<(Kind, String)> {
+        let mut go = false;
+        let picked = self.make_kind.unwrap_or_else(|| kind_for_prompt(&self.make_prompt));
+        framed().inner_margin(egui::Margin::symmetric(12, 6)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.set_height(32.0);
+                ui.label(b("Make", 14.0).color(ACCENT));
+                let field_w = (ui.available_width() - 270.0).max(160.0);
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut self.make_prompt)
+                        .hint_text("Describe something new: “a 6-slide lesson on fractions”, “a monthly budget”, “a letter to parents”…")
+                        .frame(egui::Frame::NONE)
+                        .desired_width(field_w),
+                );
+                if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    go = true;
+                }
+                let label = |k: Option<Kind>| match k {
+                    None => format!("Any app ({})", picked.label()),
+                    Some(k) => k.label().to_string(),
+                };
+                egui::ComboBox::from_id_salt("make_kind").selected_text(label(self.make_kind)).width(130.0).show_ui(ui, |ui| {
+                    *ui.visuals_mut() = home_visuals();
+                    for k in [None, Some(Kind::Word), Some(Kind::Grid), Some(Kind::Deck), Some(Kind::Graph)] {
+                        let text = match k {
+                            None => "Any app (from the words)".to_string(),
+                            Some(k) => k.label().to_string(),
+                        };
+                        ui.selectable_value(&mut self.make_kind, k, text);
+                    }
+                });
+                let can = !self.make_prompt.trim().is_empty();
+                let btn = egui::Button::new(b("Make it", 14.0).color(egui::Color32::WHITE)).fill(if can { ACCENT } else { MUTED }).corner_radius(8.0).min_size(egui::vec2(80.0, 30.0));
+                if ui.add_enabled(can, btn).on_hover_text(format!("Opens a new {} tab and asks its assistant to make it ({})", picked.label(), self.ai_cfg.model)).clicked() {
+                    go = true;
+                }
+            });
+        });
+        let text = self.make_prompt.trim().to_string();
+        (go && !text.is_empty()).then_some((picked, text))
+    }
+
+    /// New from prompt: a new tab of `kind` whose assistant is asked to make `text`.
+    fn make_from_prompt(&mut self, ctx: &egui::Context, kind: Kind, text: &str) {
+        let id = self.new_tab(kind);
+        let cfg = self.ai_cfg.clone();
+        let ask = if kind == Kind::Graph { vishual_mcp::generate_prompt(text) } else { prompt_for_new(kind, text) };
+        if let Some(e) = self.entry_mut(id) {
+            let words: String = text.split_whitespace().take(6).collect::<Vec<_>>().join(" ");
+            if !words.is_empty() {
+                e.name = if text.split_whitespace().count() > 6 { format!("{words}…") } else { words };
+            }
+            e.chat.open = true;
+            e.chat.ask_text(ask, ai_app(kind), &cfg, ctx);
+        }
+        self.make_prompt.clear();
+        self.make_kind = None;
+        ctx.request_repaint();
+    }
+
+    /// The toast, at the foot of the window until it times out (an error stays longer).
+    fn toast_ui(&mut self, ctx: &egui::Context) {
+        let Some((text, error, at)) = &self.toast else { return };
+        let now = ctx.input(|i| i.time);
+        let life = if *error { 9.0 } else { 5.0 };
+        if now - at > life {
+            self.toast = None;
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((life - (now - at)).max(0.05)));
+        let (fill, ink) = if *error { (egui::Color32::from_rgb(253, 236, 236), egui::Color32::from_rgb(160, 30, 40)) } else { (egui::Color32::from_rgb(230, 245, 243), egui::Color32::from_rgb(20, 90, 85)) };
+        let mut dismiss = false;
+        egui::Area::new(egui::Id::new("officecraft_toast")).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -28.0)).show(ctx, |ui| {
+            egui::Frame::new().fill(fill).stroke(egui::Stroke::new(1.0, ink.gamma_multiply(0.4))).corner_radius(8).inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(text.as_str()).color(ink).size(13.5));
+                    if ui.small_button("×").on_hover_text("Dismiss").clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+        });
+        if dismiss {
+            self.toast = None;
+        }
+    }
+
+    /// The tab a conversion writes into: a new one of `kind` (named `name` when given), or the
+    /// open one `to` names. `(id, made here)`.
+    fn send_target(&mut self, to: SendTo, kind: Kind, name: &str) -> Result<(u64, bool), String> {
+        // Never two tabs of the same name: an untitled source keeps its name to itself.
+        let name = if self.entries.iter().any(|e| e.name == name.trim()) { "" } else { name };
+        match to {
+            SendTo::Into(id) => match self.entries.iter().find(|e| e.id == id) {
+                Some(e) if e.kind == kind => Ok((id, false)),
+                _ => Err("that tab was closed".into()),
+            },
+            SendTo::New(_) => {
+                let id = if kind == Kind::Deck {
+                    self.new_tab(Kind::Deck)
+                } else {
+                    self.push_tab(kind, Tab::create(kind))
+                };
+                if !name.trim().is_empty()
+                    && let Some(e) = self.entry_mut(id)
+                {
+                    e.name = name.trim().to_string();
+                }
+                Ok((id, true))
+            }
+            SendTo::Pdf => Err("not a tab".into()),
+        }
+    }
+
+    /// A tab a conversion made and then could not fill: gone again, with nothing to save.
+    fn drop_made_tab(&mut self, id: u64, back: View) {
+        self.entries.retain(|e| e.id != id);
+        self.tiles.retain(|t| *t != id);
+        self.view = back;
+    }
+
+    /// The conversion itself. `Ok(None)`: the user cancelled (the PDF file dialog).
+    fn convert_tab(&mut self, ctx: &egui::Context, from: u64, to: SendTo) -> Result<Option<String>, String> {
+        let (kind, name) = self.entries.iter().find(|e| e.id == from).map(|e| (e.kind, e.name.clone())).ok_or_else(|| "that tab was closed".to_string())?;
+        if to == SendTo::Pdf {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let dir = self.entries.iter().find(|e| e.id == from).and_then(|e| e.path.as_deref()).and_then(|p| std::path::Path::new(p).parent().map(std::path::Path::to_path_buf));
+                let mut dlg = rfd::FileDialog::new().set_file_name(convert::renamed(&name, "pdf")).add_filter("PDF", &["pdf"]);
+                if let Some(d) = dir {
+                    dlg = dlg.set_directory(d);
+                }
+                let Some(dest) = dlg.save_file() else { return Ok(None) };
+                return self.send_pdf(ctx, from, &dest.to_string_lossy()).map(Some);
+            }
+            #[cfg(target_arch = "wasm32")]
+            return Err("PDF copies are made in the desktop app".into());
+        }
+        let back = self.view;
+        let target_kind = match to {
+            SendTo::New(k) => k,
+            SendTo::Into(id) => self.entries.iter().find(|e| e.id == id).map(|e| e.kind).ok_or_else(|| "that tab was closed".to_string())?,
+            SendTo::Pdf => unreachable!(),
+        };
+        // Read everything first, so a document that cannot be converted opens no tab.
+        let made = match (kind, target_kind) {
+            (Kind::Word, Kind::Deck) => {
+                let inspect = self.tab_call(ctx, from, "document.inspect", serde_json::json!({ "text": true }))?;
+                let mut args = convert::doc_to_slides(&inspect, &name)?;
+                // Added to a deck that has its own: no second title slide.
+                if matches!(to, SendTo::Into(_))
+                    && let Some(list) = args.get_mut("slides").and_then(serde_json::Value::as_array_mut)
+                    && list.len() > 1
+                    && list[0].get("layout").and_then(serde_json::Value::as_str) == Some("title")
+                {
+                    list.remove(0);
+                }
+                let title = args.get("title").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+                let (deck, fresh) = self.send_target(to, Kind::Deck, &title)?;
+                let built = match self.entry_mut(deck) {
+                    Some(e) => {
+                        let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+                        ai::build_slides(&mut host, &args)
+                    }
+                    None => Err("that tab was closed".into()),
+                };
+                (deck, fresh, built.map(|v| format!("Made {} from {name}.", plural(v.get("slides_added").and_then(serde_json::Value::as_u64).unwrap_or(0), "slide"))))
+            }
+            (Kind::Deck, Kind::Word) => {
+                let info = self.tab_call(ctx, from, "document.inspect", serde_json::json!({}))?;
+                let n = info.get("slides").and_then(serde_json::Value::as_array).map_or(0, Vec::len);
+                let mut slides = Vec::with_capacity(n);
+                for i in 0..n {
+                    slides.push(self.tab_run(ctx, from, "slide.inspect", serde_json::json!({ "index": i }))?);
+                }
+                let mut args = convert::slides_to_blocks(&slides)?;
+                let (doc, fresh) = self.send_target(to, Kind::Word, &convert::stem(&name))?;
+                if !fresh {
+                    args["at"] = serde_json::json!("cursor");
+                }
+                let r = match self.entry_mut(doc) {
+                    Some(e) => {
+                        let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+                        ai::insert_blocks(&mut host, &args)
+                    }
+                    None => Err("that tab was closed".into()),
+                };
+                (doc, fresh, r.map(|_| format!("Wrote the text of {} from {name}.", plural(n as u64, "slide"))))
+            }
+            (Kind::Grid, Kind::Word) => {
+                let (text, html, range) = self.sheet_table(ctx, from)?;
+                let (dest, fresh) = self.send_target(to, Kind::Word, &convert::stem(&name))?;
+                let mut paste = serde_json::json!({ "text": text });
+                if let Some(h) = &html {
+                    paste["html"] = serde_json::json!(h);
+                }
+                let r = self.tab_run(ctx, dest, "edit.paste", paste);
+                let how = if html.is_some() { "" } else { " (as text: the range is too big for a table)" };
+                (dest, fresh, r.map(|_| format!("Sent {range} from {name}{how}.")))
+            }
+            (Kind::Grid, Kind::Deck) => {
+                // DeckCraft pastes HTML as text, so the table is made from the shown values.
+                let read = self.tab_call(ctx, from, "sheet.read", serde_json::json!({ "formatted": true }))?;
+                let range = read.get("range").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+                // The slide size is the target deck's; a new deck's is the default.
+                let probe = (960.0, 540.0);
+                convert::slide_table(&read, probe)?;
+                let (dest, fresh) = self.send_target(to, Kind::Deck, &convert::stem(&name))?;
+                let size = self
+                    .tab_call(ctx, dest, "document.inspect", serde_json::json!({}))
+                    .ok()
+                    .and_then(|v| v.get("slideSize").and_then(serde_json::Value::as_array).and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))))
+                    .unwrap_or(probe);
+                let r = convert::slide_table(&read, size).and_then(|(params, cut)| {
+                    self.new_slide_for(ctx, dest, fresh, "titleOnly", &convert::stem(&name))?;
+                    self.tab_run(ctx, dest, "insert.table", params)?;
+                    let (mr, mc) = convert::SLIDE_TABLE_MAX;
+                    Ok(if cut { format!("Sent {range} from {name}: the first {mr} rows and {mc} columns fit on the slide.") } else { format!("Sent {range} from {name}.") })
+                });
+                (dest, fresh, r)
+            }
+            (Kind::Graph, Kind::Word | Kind::Deck) => {
+                let (png, doc_json) = match self.entry_mut(from).map(|e| &mut e.tab) {
+                    Some(Tab::Graph(a)) => (a.render_png(GRAPH_PX)?, a.doc_json()),
+                    _ => return Err("that tab was closed".into()),
+                };
+                let (dest, fresh) = self.send_target(to, target_kind, if target_kind == Kind::Word { "" } else { "Graph" })?;
+                let r = if target_kind == Kind::Word {
+                    // The graph rides inside the PNG, so a double-click opens it in viSHual again.
+                    let data = graphpic::base64_encode(&graphpic::embed(&png, &doc_json).unwrap_or(png));
+                    self.tab_run(ctx, dest, "insert.picture", serde_json::json!({ "data": data, "width": 430, "alt": "Graph" })).map(|_| {
+                        let _ = self.tab_run(ctx, dest, "select.collapse", serde_json::json!({ "end": true }));
+                    })
+                } else {
+                    self.new_slide_for(ctx, dest, fresh, "blank", "")
+                        .and_then(|_| self.tab_run(ctx, dest, "insert.picture", serde_json::json!({ "data": graphpic::base64_encode(&png), "name": "graph.png" })).map(|_| ()))
+                };
+                (dest, fresh, r.map(|_| format!("Sent the graph from {name}.")))
+            }
+            _ => return Err(format!("{} can't go to {}", kind.label(), target_kind.label())),
+        };
+        let (dest, fresh, result) = made;
+        match result {
+            Ok(said) => {
+                self.view = View::Tab(dest);
+                Ok(Some(said))
+            }
+            Err(e) => {
+                if fresh {
+                    self.drop_made_tab(dest, back);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// A Sheets tab's used range on its active sheet, as (tab-separated text, HTML table when
+    /// small enough, the range's address). GridCraft's own copy makes the HTML; what the user
+    /// had copied inside GridCraft is put back afterwards.
+    fn sheet_table(&mut self, ctx: &egui::Context, id: u64) -> Result<(String, Option<String>, String), String> {
+        let read = self.tab_call(ctx, id, "sheet.read", serde_json::json!({}))?;
+        let range = read.get("range").and_then(serde_json::Value::as_str).filter(|r| !r.is_empty()).ok_or_else(|| "the sheet is empty".to_string())?.to_string();
+        let saved = match self.entry_mut(id).map(|e| &mut e.tab) {
+            Some(Tab::Grid(a)) => a.session.clipboard.take(),
+            _ => None,
+        };
+        let copy = self.tab_run(ctx, id, "edit.copy", serde_json::json!({ "range": range, "html": true }));
+        if let Some(Tab::Grid(a)) = self.entry_mut(id).map(|e| &mut e.tab) {
+            a.session.clipboard = saved;
+        }
+        let copy = copy?;
+        let text = copy.get("text").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+        let html = copy.get("html").and_then(serde_json::Value::as_str).filter(|h| !h.is_empty()).map(str::to_string);
+        Ok((text, html, range))
+    }
+
+    /// A new slide in deck `id` to put something on, with `layout` and `title`. A deck made for
+    /// this has its empty first slide replaced.
+    fn new_slide_for(&mut self, ctx: &egui::Context, id: u64, fresh: bool, layout: &str, title: &str) -> Result<(), String> {
+        let mut p = serde_json::json!({ "layout": layout });
+        if !title.is_empty() {
+            p["title"] = serde_json::json!(title);
+        }
+        self.tab_run(ctx, id, "slide.new", p)?;
+        if fresh {
+            self.tab_run(ctx, id, "slide.delete", serde_json::json!({ "index": 0 }))?;
+        }
+        Ok(())
+    }
+
+    /// Docs, Sheets or Slides → a PDF at `path`, opened in a PDF tab (desktop).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn send_pdf(&mut self, ctx: &egui::Context, from: u64, path: &str) -> Result<String, String> {
+        let canonical = canonical_path(path);
+        if self.entries.iter().any(|e| e.path.as_deref() == Some(canonical.as_str())) {
+            return Err(format!("{} is open in a tab; close it first", file_name_of(path)));
+        }
+        let kind = self.entries.iter().find(|e| e.id == from).map(|e| e.kind).ok_or_else(|| "that tab was closed".to_string())?;
+        match kind {
+            Kind::Word => self.tab_run(ctx, from, "file.exportPdf", serde_json::json!({ "path": path }))?,
+            Kind::Grid => self.tab_run(ctx, from, "file.exportPdf", serde_json::json!({ "path": path, "sheets": "all" }))?,
+            Kind::Deck => self.tab_run(ctx, from, "file.export", serde_json::json!({ "path": path, "format": "pdf" }))?,
+            other => return Err(format!("{} has no PDF export", other.label())),
+        };
+        self.open_file(ctx, path);
+        Ok(format!("Saved {} and opened it.", file_name_of(path)))
+    }
+
     fn equation_inserts(&mut self, ctx: &egui::Context) {
         let targets: Vec<equation::Target> = self
             .entries
@@ -2939,6 +3446,7 @@ impl Suite {
         let ctx = ui.ctx().clone();
         let mut open: Option<String> = None;
         let mut new: Option<Kind> = None;
+        let mut make: Option<(Kind, String)> = None;
         let mut pick_files = false;
         let mut add_folder = false;
         let mut remove_folder: Option<usize> = None;
@@ -3198,7 +3706,9 @@ impl Suite {
                 ui.colored_label(ACCENT, st);
             }
 
-            ui.add_space(18.0);
+            ui.add_space(14.0);
+            make = self.make_from_prompt_ui(ui);
+            ui.add_space(14.0);
             let starts = [(Kind::Word, "WordCraft", "Docs"), (Kind::Grid, "GridCraft", "Sheets"), (Kind::Deck, "DeckCraft", "Slides"), (Kind::Pdf, "PdfCraft", "PDF"), (Kind::Graph, "viSHual", "Graphs"), (Kind::Equation, "equaSHion", "Equations"), (Kind::Vershion, "verSHion", "Exams")];
             ui.spacing_mut().item_spacing.x = 12.0;
             ui.columns(7, |cols| {
@@ -3462,6 +3972,9 @@ impl Suite {
         if let Some(k) = new {
             self.new_tab(k);
             ctx.request_repaint();
+        }
+        if let Some((k, text)) = make {
+            self.make_from_prompt(&ctx, k, &text);
         }
         if let Some(p) = open {
             self.open_file(&ctx, &p);
@@ -3926,6 +4439,12 @@ impl eframe::App for Suite {
         if let Ok(dir) = std::env::var("OFFICECRAFT_SELFTEST_GRAPH") {
             self.graph_selftest(ctx, &dir);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(dir) = std::env::var("OFFICECRAFT_SELFTEST_SENDTO")
+            && ctx.cumulative_frame_nr() >= 3
+        {
+            self.send_selftest(ctx, &dir);
+        }
         if let Some((prompt, started)) = self.ai_selftest.clone() {
             self.drive_ai_selftest(ctx, prompt, started);
         }
@@ -3976,6 +4495,7 @@ impl eframe::App for Suite {
         let mut close: Option<u64> = None;
         let mut new: Option<Kind> = None;
         let mut toggle_chat: Option<u64> = None;
+        let mut send: Option<(u64, SendTo)> = None;
         let mut toggle_tile = false;
         let mut drag_now: Option<u64> = None;
         let mut drop_tab: Option<(u64, egui::Pos2)> = None;
@@ -4060,6 +4580,17 @@ impl eframe::App for Suite {
                                 ui.close();
                             }
                         }
+                        let targets = Suite::send_targets(&self.entries, e.id);
+                        if !targets.is_empty() {
+                            ui.menu_button("Send to", |ui| {
+                                for (label, to) in &targets {
+                                    if ui.button(label).clicked() {
+                                        send = Some((e.id, *to));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        }
                         if ui.button("Close tab").clicked() {
                             close = Some(e.id);
                             ui.close();
@@ -4102,6 +4633,21 @@ impl eframe::App for Suite {
                     #[cfg(not(target_arch = "wasm32"))]
                     if ui.button("⟳").on_hover_text("Updates: rebuild against the newest app commits").clicked() {
                         self.updater.open = !self.updater.open;
+                    }
+                    if let View::Tab(id) = self.view {
+                        let targets = Suite::send_targets(&self.entries, id);
+                        if !targets.is_empty() {
+                            ui.menu_button("Send to ▾", |ui| {
+                                for (label, to) in &targets {
+                                    if ui.button(label).clicked() {
+                                        send = Some((id, *to));
+                                        ui.close();
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text("Make this into a document of another app, or a PDF");
+                        }
                     }
                     if let View::Tab(id) = self.view
                         && self.entries.iter().find(|e| e.id == id).is_some_and(|e| e.kind.has_assistant())
@@ -4185,6 +4731,10 @@ impl eframe::App for Suite {
         {
             e.chat.open = !e.chat.open;
         }
+        if let Some((from, to)) = send {
+            self.send_to(ui.ctx(), from, to);
+        }
+        self.toast_ui(ui.ctx());
         if let Some(id) = tile_in {
             self.tile_with(id, None);
         }
@@ -4492,6 +5042,60 @@ fn main() -> eframe::Result {
             Ok(Box::new(suite))
         }),
     )
+}
+
+/// New from prompt: the app a description asks for, when the user leaves the choice to us. A
+/// word for slides, a sheet or a graph picks that app; anything else is a document.
+fn kind_for_prompt(text: &str) -> Kind {
+    let t = text.to_lowercase();
+    let words: Vec<&str> = t.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let has = |list: &[&str]| words.iter().any(|w| list.contains(w));
+    // Order matters: "a slide deck with a chart" is slides, "a spreadsheet to graph" a sheet.
+    if has(&["slide", "slides", "deck", "presentation", "presentations", "slideshow", "powerpoint", "pptx", "keynote"]) {
+        Kind::Deck
+    } else if has(&["spreadsheet", "spreadsheets", "sheet", "sheets", "workbook", "budget", "gradebook", "ledger", "tracker", "excel", "xlsx", "csv"]) {
+        Kind::Grid
+    } else if has(&["graph", "graphs", "plot", "plots", "desmos"]) && !has(&["essay", "letter", "report", "document"]) {
+        Kind::Graph
+    } else {
+        Kind::Word
+    }
+}
+
+/// What the assistant of a new, empty tab is asked, around the user's own words.
+fn prompt_for_new(kind: Kind, text: &str) -> String {
+    let what = match kind {
+        Kind::Grid => "workbook",
+        Kind::Deck => "presentation",
+        _ => "document",
+    };
+    format!("This is a new, empty {what}. Make it from this description, all of it, in this {what}:\n\n{}", text.trim())
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+
+    #[test]
+    fn a_description_picks_its_app() {
+        assert!(kind_for_prompt("A 6-slide lesson on fractions") == Kind::Deck);
+        assert!(kind_for_prompt("presentation about the water cycle with a chart") == Kind::Deck);
+        assert!(kind_for_prompt("Monthly budget for a family of four") == Kind::Grid);
+        assert!(kind_for_prompt("a gradebook for 30 students") == Kind::Grid);
+        assert!(kind_for_prompt("Plot y = x^2 and its derivative") == Kind::Graph);
+        assert!(kind_for_prompt("A one-page field trip letter to parents") == Kind::Word);
+        assert!(kind_for_prompt("a report that includes a graph of sales") == Kind::Word);
+        // Whole words only: "sheetrock" is not a sheet, "slideshow" is slides.
+        assert!(kind_for_prompt("how to hang sheetrock") == Kind::Word);
+        assert!(kind_for_prompt("Slideshow: our trip") == Kind::Deck);
+    }
+
+    #[test]
+    fn the_new_tab_prompt_names_the_app() {
+        let p = prompt_for_new(Kind::Deck, "  five slides on volcanoes ");
+        assert!(p.contains("new, empty presentation") && p.ends_with("five slides on volcanoes"));
+        assert!(prompt_for_new(Kind::Word, "x").contains("document"));
+    }
 }
 
 #[cfg(test)]

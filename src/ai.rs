@@ -1618,7 +1618,7 @@ pub fn build_slides(host: &mut dyn Host, args: &Value) -> Result<Value, String> 
 
 /// `insert_blocks`: the paragraphs go in one by one through the document's own commands, so the
 /// model never has to juggle the caret, styles and list state itself.
-fn insert_blocks(host: &mut dyn Host, args: &Value) -> Result<Value, String> {
+pub fn insert_blocks(host: &mut dyn Host, args: &Value) -> Result<Value, String> {
     let blocks = args.get("blocks").and_then(Value::as_array).ok_or("insert_blocks needs `blocks`")?;
     if blocks.is_empty() {
         return Err("`blocks` is empty".into());
