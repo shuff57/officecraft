@@ -1098,6 +1098,20 @@ fn row_interact(resp: &egui::Response, r: &Row, in_recent: bool, acts: &mut Home
                 ui.close();
             }
         }
+        // Browser: a file in a folder added through the directory picker can be renamed and
+        // deleted (for good: a page has no Trash).
+        #[cfg(target_arch = "wasm32")]
+        if !r.is_dir && web::can_change(&r.path) {
+            if ui.button("Rename…").clicked() {
+                acts.op = Some(FileOp::Rename { path: r.path.clone(), name: r.name.clone(), error: None });
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(egui::RichText::new("Delete…").color(egui::Color32::from_rgb(180, 40, 50))).clicked() {
+                acts.op = Some(FileOp::Trash { path: r.path.clone(), open: Vec::new(), is_dir: false });
+                ui.close();
+            }
+        }
     });
 }
 
@@ -2805,6 +2819,79 @@ impl Suite {
         self.recount(ctx);
     }
 
+    /// Browser: the rename or delete dialog for a file in an added folder, when one is open. The
+    /// change itself runs in the page (`web::rename`, `web::delete`) and reports through
+    /// `web::take_notes`.
+    #[cfg(target_arch = "wasm32")]
+    fn web_file_op_ui(&mut self, ctx: &egui::Context) {
+        for (text, error) in web::take_notes() {
+            if error {
+                self.notice = Some(text);
+            } else {
+                self.notice = None;
+                self.status = Some(text);
+            }
+        }
+        let Some(op) = &mut self.file_op else { return };
+        let (mut done, mut go) = (false, false);
+        let title = if matches!(op, FileOp::Rename { .. }) { "Rename" } else { "Delete for good?" };
+        let mut focus = !self.file_op_focused;
+        egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            *ui.visuals_mut() = home_visuals();
+            match op {
+                FileOp::Rename { name, error, .. } => {
+                    let field = ui.add(egui::TextEdit::singleline(name).desired_width(320.0));
+                    if focus {
+                        field.request_focus();
+                        focus = false;
+                    }
+                    if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        go = true;
+                    }
+                    if let Some(e) = error {
+                        ui.colored_label(egui::Color32::from_rgb(190, 40, 50), e.as_str());
+                    }
+                }
+                FileOp::Trash { path, .. } => {
+                    ui.label(format!("Delete {} from the folder? A browser has no Trash, so this can't be undone.", file_name_of(path)));
+                    ui.label(egui::RichText::new("A tab that has it open keeps its copy; saving that tab then downloads it.").size(12.0).color(MUTED));
+                }
+                FileOp::NewFolder { .. } => done = true,
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let verb = if matches!(op, FileOp::Rename { .. }) { "Rename" } else { "Delete" };
+                if ui.button(verb).clicked() {
+                    go = true;
+                }
+                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    done = true;
+                }
+            });
+        });
+        self.file_op_focused = !focus;
+        if go {
+            match op {
+                FileOp::Rename { path, name, error } => match web::check_name(name) {
+                    Ok(()) => {
+                        web::rename(path, name, self.folder_scans.clone());
+                        done = true;
+                    }
+                    Err(e) => *error = Some(e),
+                },
+                FileOp::Trash { path, .. } => {
+                    web::delete(path, self.folder_scans.clone());
+                    done = true;
+                }
+                FileOp::NewFolder { .. } => done = true,
+            }
+        }
+        if done {
+            self.file_op = None;
+            self.file_op_focused = false;
+        }
+    }
+
     /// The rename / new folder / trash dialog, when one is open.
     #[cfg(not(target_arch = "wasm32"))]
     fn file_op_ui(&mut self, ctx: &egui::Context) {
@@ -4068,7 +4155,14 @@ impl Suite {
             self.file_op_ui(&ctx);
         }
         #[cfg(target_arch = "wasm32")]
-        let _ = (acts, crumb_go, new_folder, reorder, open_trash);
+        {
+            if let Some(op) = acts.op {
+                self.file_op = Some(op);
+                self.file_op_focused = false;
+            }
+            self.web_file_op_ui(&ctx);
+            let _ = (crumb_go, new_folder, reorder, open_trash);
+        }
         if let Some(s) = select {
             self.folder_sel = s;
             self.cwd = None;
@@ -4578,6 +4672,13 @@ impl eframe::App for Suite {
         self.equation_inserts(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.serve_mcp(ctx);
+        #[cfg(target_arch = "wasm32")]
+        {
+            static TEST_FOLDER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !TEST_FOLDER.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                web::add_test_folder(self.folder_scans.clone());
+            }
+        }
         self.make_requested_graphs(ctx);
         self.open_double_clicked_graphs(ctx);
         // `OFFICECRAFT_AUTOSEND=<prompt>`: once a tab is open, show its assistant and send the prompt

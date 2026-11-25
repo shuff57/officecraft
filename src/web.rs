@@ -478,6 +478,36 @@ pub fn add_folder(scans: crate::FolderScans) {
     });
 }
 
+/// Test hook, `?test-folder=opfs`: adds the page's origin-private file system (the same handle
+/// API as a picked folder, but no picker to click) as the folder "OPFS", with two sample files.
+pub fn add_test_folder(scans: crate::FolderScans) {
+    if !query().contains("test-folder=opfs") {
+        return;
+    }
+    wasm_bindgen_futures::spawn_local(async move {
+        let result: Result<(), String> = async {
+            let window = web_sys::window().ok_or("no window")?;
+            let storage = js_sys::Reflect::get(&window.navigator(), &"storage".into()).map_err(js_err)?;
+            let root = await_js(call(&storage, "getDirectory", &[])?).await?;
+            let create = js_sys::Object::new();
+            set_prop(&create, "create", &Js::TRUE)?;
+            for (name, text) in [("notes.txt", "first file"), ("budget.csv", "item,cost\nbus,12\n")] {
+                let h = await_js(call(&root, "getFileHandle", &[Js::from_str(name), create.clone().into()])?).await?;
+                write_handle(&h, text.as_bytes()).await?;
+            }
+            DIRS.with(|m| m.borrow_mut().insert("OPFS".into(), root.clone()));
+            let rows = scan_dir(&root, "OPFS").await?;
+            scans.lock().unwrap_or_else(|e| e.into_inner()).push(crate::FolderScan { key: "OPFS".into(), rows, added: true, seq: 0, error: None });
+            repaint();
+            Ok(())
+        }
+        .await;
+        if let Err(e) = result {
+            log::error!("test folder: {e}");
+        }
+    });
+}
+
 /// Lists `key` again (files may have changed on disk) and queues the result.
 pub fn rescan_folder(key: &str, scans: crate::FolderScans) {
     let Some(handle) = DIRS.with(|m| m.borrow().get(key).cloned()) else { return };
@@ -546,6 +576,144 @@ pub fn open_from_folder(path: &str, inbox: Inbox) {
         match result {
             Ok(()) => repaint(),
             Err(e) => log::error!("couldn't open {rel}: {e}"),
+        }
+    });
+}
+
+// ---- Changing files in an added folder (rename, delete) ----
+
+thread_local! {
+    /// What the last rename or delete said, for the shell to show: (text, is an error).
+    static NOTES: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Messages from finished file operations since the last call.
+pub fn take_notes() -> Vec<(String, bool)> {
+    NOTES.with(|n| std::mem::take(&mut *n.borrow_mut()))
+}
+
+fn note(text: String, error: bool) {
+    NOTES.with(|n| n.borrow_mut().push((text, error)));
+    repaint();
+}
+
+/// Whether `path` is a file in a folder added through the directory picker, which can be
+/// renamed and deleted (a snapshot folder is read-only).
+pub fn can_change(path: &str) -> bool {
+    folder_of(path).is_some_and(|(key, _)| DIRS.with(|m| m.borrow().contains_key(&key)))
+}
+
+/// The folder handle holding `path`, the file's name, and the added folder's key. Asks for
+/// write access to the added folder first (the picker grants reading only).
+async fn parent_of(path: &str) -> Result<(Js, String, String), String> {
+    let (key, rel) = folder_of(path).ok_or("not in an added folder")?;
+    let root = DIRS.with(|m| m.borrow().get(&key).cloned()).ok_or("the folder is no longer added")?;
+    let mode = js_sys::Object::new();
+    set_prop(&mode, "mode", &Js::from_str("readwrite"))?;
+    let state = match call(&root, "queryPermission", &[mode.clone().into()]) {
+        Ok(p) => await_js(p).await.ok().and_then(|v| v.as_string()).unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    if state != "granted" {
+        let asked = await_js(call(&root, "requestPermission", &[mode.into()])?).await?.as_string().unwrap_or_default();
+        if asked != "granted" {
+            return Err("the browser did not allow changes in this folder".into());
+        }
+    }
+    let parts: Vec<&str> = rel.split('/').collect();
+    let (name, dirs) = parts.split_last().ok_or("empty path")?;
+    let mut dir = root;
+    for d in dirs {
+        dir = await_js(call(&dir, "getDirectoryHandle", &[Js::from_str(d)])?).await?;
+    }
+    Ok((dir, name.to_string(), key))
+}
+
+/// A name a file can be renamed to: not empty, not hidden, no folder separators.
+pub fn check_name(name: &str) -> Result<(), String> {
+    let n = name.trim();
+    if n.is_empty() || n == "." || n == ".." {
+        return Err("Enter a name.".into());
+    }
+    if n.starts_with('.') {
+        return Err("A name can't start with a dot.".into());
+    }
+    if n.contains(['/', '\\']) {
+        return Err("A name can't contain / or \\.".into());
+    }
+    Ok(())
+}
+
+/// Renames the file at `path` to `new_name` in its folder, then lists the folder again. Where the
+/// browser can't move a file, it is copied to the new name and the old one removed.
+pub fn rename(path: &str, new_name: &str, scans: crate::FolderScans) {
+    let (path, new_name) = (path.to_string(), new_name.trim().to_string());
+    wasm_bindgen_futures::spawn_local(async move {
+        let result: Result<(String, String), String> = async {
+            let (dir, name, key) = parent_of(&path).await?;
+            if name == new_name {
+                return Ok((key, name));
+            }
+            // Never write over another file.
+            if await_js(call(&dir, "getFileHandle", &[Js::from_str(&new_name)])?).await.is_ok() {
+                return Err(format!("There is already a file named {new_name}."));
+            }
+            let handle = await_js(call(&dir, "getFileHandle", &[Js::from_str(&name)])?).await?;
+            let moved = match call(&handle, "move", &[Js::from_str(&new_name)]) {
+                Ok(p) => await_js(p).await.is_ok(),
+                Err(_) => false,
+            };
+            let handle = if moved {
+                handle
+            } else {
+                let file = await_js(call(&handle, "getFile", &[])?).await?;
+                let bytes = js_sys::Uint8Array::new(&await_js(call(&file, "arrayBuffer", &[])?).await?).to_vec();
+                let create = js_sys::Object::new();
+                set_prop(&create, "create", &Js::TRUE)?;
+                let copy = await_js(call(&dir, "getFileHandle", &[Js::from_str(&new_name), create.into()])?).await?;
+                write_handle(&copy, &bytes).await?;
+                await_js(call(&dir, "removeEntry", &[Js::from_str(&name)])?).await?;
+                copy
+            };
+            // An open tab still saves under its old name: point both names at the file.
+            HANDLES.with(|m| {
+                let mut m = m.borrow_mut();
+                if m.contains_key(&name) {
+                    m.insert(name.clone(), Some(handle.clone()));
+                }
+                m.insert(new_name.clone(), Some(handle));
+            });
+            Ok((key, name))
+        }
+        .await;
+        match result {
+            Ok((key, old)) => {
+                note(format!("Renamed {old} to {new_name}"), false);
+                rescan_folder(&key, scans);
+            }
+            Err(e) => note(format!("Couldn't rename: {e}"), true),
+        }
+    });
+}
+
+/// Deletes the file at `path` for good (a browser has no Trash), then lists the folder again.
+pub fn delete(path: &str, scans: crate::FolderScans) {
+    let path = path.to_string();
+    wasm_bindgen_futures::spawn_local(async move {
+        let result: Result<(String, String), String> = async {
+            let (dir, name, key) = parent_of(&path).await?;
+            await_js(call(&dir, "removeEntry", &[Js::from_str(&name)])?).await?;
+            // An open tab of it saves as a download from now on.
+            HANDLES.with(|m| m.borrow_mut().remove(&name));
+            Ok((key, name))
+        }
+        .await;
+        match result {
+            Ok((key, name)) => {
+                note(format!("Deleted {name}"), false);
+                rescan_folder(&key, scans);
+            }
+            Err(e) => note(format!("Couldn't delete: {e}"), true),
         }
     });
 }

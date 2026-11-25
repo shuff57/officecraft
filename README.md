@@ -130,6 +130,9 @@ another's, in a new tab or an open one:
 - Graph → Docs or Slides inserts the graph as a picture. In Docs it can still be edited.
 - Docs, Sheets or Slides → PDF saves a PDF and opens it in a PDF tab.
 
+In the web build, a file in a folder added with the folder picker can be renamed or deleted from its
+right-click menu. Delete is permanent, because a browser has no Trash.
+
 Closing the window or restarting after an update asks first when a tab has unsaved work. Docs and
 Slides keep recovery copies of unsaved documents in `~/.local/share/officecraft/recovery`; after a
 crash they come back on the next launch (`OFFICECRAFT_NO_RECOVERY=1` turns this off).
@@ -142,9 +145,17 @@ cargo run --release
 cargo test
 ```
 
-Debug switches: `OFFICECRAFT_SELFTEST=1` cycles every view and exits;
-`OFFICECRAFT_SHOT=out.ppm` draws a few frames, saves the window and exits (open files on the
-command line first to capture an app tab).
+Debug switches:
+- `OFFICECRAFT_SELFTEST=1` cycles every view and exits.
+- `OFFICECRAFT_SHOT=out.ppm` draws a few frames, saves the window and exits. Open files on the
+  command line first to capture an app tab.
+- `OFFICECRAFT_SELFTEST_SENDTO=<dir>` runs every Send to conversion, checks the results, and writes
+  the PDFs to `<dir>`.
+- `OFFICECRAFT_SELFTEST_AI=<prompt>` sends one message through the assistant and prints the
+  transcript.
+
+In the web build, `?test-folder=opfs` adds the page's private storage as a folder named "OPFS"
+holding two sample files. Rename and Delete can then be tried without the folder picker.
 
 ## Licence
 
