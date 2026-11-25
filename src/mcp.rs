@@ -13,7 +13,7 @@
 //! server thread waits for that answer.
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -218,12 +218,16 @@ pub fn random_port() -> u16 {
 /// `params` are the command's own: WordCraft's `mailings.finish` writes its merged document to a
 /// `path` when given one (the only writer outside `file.` in the apps' engines; the others write
 /// to fixed places such as the spelling dictionary or recovery copies).
+/// `edit.repeat` and running a recorded macro are refused too: either can replay a save the user
+/// made, to the user's path.
 pub fn writes_files(command: &str, params: Option<&Value>) -> bool {
     (command.starts_with("file.") && !matches!(command, "file.info" | "file.render" | "file.strictReport"))
         || (command == "mailings.finish" && params.and_then(|p| p.get("path")).is_some_and(|p| !p.is_null()))
+        || command == "edit.repeat"
+        || (command == "tools.macros" && params.and_then(|p| p.get("run")).is_some_and(|r| !r.is_null()))
 }
 
-/// The first `file.` command named anywhere in a tool's arguments (`command`, a `batch` list's
+/// The first command named anywhere in a tool's arguments (`command`, a `batch` list's
 /// `command`s, or an `id`) that [`writes_files`].
 pub fn file_command_in(v: &Value) -> Option<String> {
     match v {
@@ -319,16 +323,25 @@ fn read_head(r: &mut BufReader<&TcpStream>) -> Result<Request, String> {
     Ok(Request { method, path, headers, body: Vec::new() })
 }
 
-/// The body the head announced, at most [`MAX_BODY`] bytes.
+/// The body the head announced, at most [`MAX_BODY`] bytes, all of it within 30 s (the socket's
+/// timeout is re-armed with what is left before every read, as for the head).
 fn read_body(r: &mut BufReader<&TcpStream>, req: &mut Request) -> Result<(), String> {
     let len = req.header("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
     if len > MAX_BODY {
         return Err("request too large".into());
     }
-    let mut body = Vec::new();
-    r.by_ref().take(len as u64).read_to_end(&mut body).map_err(|e| e.to_string())?;
-    if body.len() != len {
-        return Err("short body".into());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut body = Vec::with_capacity(len.min(64 * 1024));
+    while body.len() < len {
+        let left = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()).ok_or("too slow")?;
+        r.get_ref().set_read_timeout(Some(left)).map_err(|e| e.to_string())?;
+        let chunk = r.fill_buf().map_err(|e| e.to_string())?;
+        if chunk.is_empty() {
+            return Err("short body".into());
+        }
+        let take = chunk.len().min(len - body.len());
+        body.extend_from_slice(&chunk[..take]);
+        r.consume(take);
     }
     req.body = body;
     Ok(())
@@ -406,10 +419,7 @@ fn serve(stream: TcpStream) {
             return respond(stream, "405 Method Not Allowed", "");
         }
     }
-    // The body gets its own 30 s, not what the head left over.
-    if stream.set_read_timeout(Some(Duration::from_secs(30))).is_err() {
-        return;
-    }
+    // The body gets its own 30 s in all, not what the head left over (`read_body`).
     let body_read = read_body(&mut r, &mut req);
     drop(r);
     if body_read.is_err() {
@@ -539,6 +549,11 @@ mod tests {
         assert_eq!(file_command_in(&json!({"command": "mailings.finish", "params": {"path": "/home/u/thesis.docx"}})).as_deref(), Some("mailings.finish"));
         assert_eq!(file_command_in(&json!({"commands": [{"command": "mailings.finish", "params": {"path": "/x.docx"}}]})).as_deref(), Some("mailings.finish"));
         assert!(file_command_in(&json!({"command": "mailings.finish", "params": {}})).is_none());
+        assert!(file_command_in(&json!({"command": "mailings.finish", "params": {"path": null}})).is_none());
+        // Replaying a save the user made.
+        assert_eq!(file_command_in(&json!({"command": "edit.repeat"})).as_deref(), Some("edit.repeat"));
+        assert_eq!(file_command_in(&json!({"command": "tools.macros", "params": {"run": "Save it"}})).as_deref(), Some("tools.macros"));
+        assert!(file_command_in(&json!({"command": "tools.macros", "params": {}})).is_none());
     }
 
     #[test]
