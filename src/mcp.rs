@@ -215,8 +215,12 @@ pub fn random_port() -> u16 {
 
 /// An app command an outside agent may not run through `use_tool`: files are written only by
 /// `save` and `send_to`, which refuse to replace a file. Reading file information is allowed.
-pub fn writes_files(command: &str) -> bool {
-    command.starts_with("file.") && !matches!(command, "file.info" | "file.render" | "file.strictReport")
+/// `params` are the command's own: WordCraft's `mailings.finish` writes its merged document to a
+/// `path` when given one (the only writer outside `file.` in the apps' engines; the others write
+/// to fixed places such as the spelling dictionary or recovery copies).
+pub fn writes_files(command: &str, params: Option<&Value>) -> bool {
+    (command.starts_with("file.") && !matches!(command, "file.info" | "file.render" | "file.strictReport"))
+        || (command == "mailings.finish" && params.and_then(|p| p.get("path")).is_some_and(|p| !p.is_null()))
 }
 
 /// The first `file.` command named anywhere in a tool's arguments (`command`, a `batch` list's
@@ -227,7 +231,7 @@ pub fn file_command_in(v: &Value) -> Option<String> {
             for (k, x) in m {
                 if matches!(k.as_str(), "command" | "id" | "cmd")
                     && let Some(c) = x.as_str()
-                    && writes_files(c.trim())
+                    && writes_files(c.trim(), m.get("params"))
                 {
                     return Some(c.trim().to_string());
                 }
@@ -402,6 +406,10 @@ fn serve(stream: TcpStream) {
             return respond(stream, "405 Method Not Allowed", "");
         }
     }
+    // The body gets its own 30 s, not what the head left over.
+    if stream.set_read_timeout(Some(Duration::from_secs(30))).is_err() {
+        return;
+    }
     let body_read = read_body(&mut r, &mut req);
     drop(r);
     if body_read.is_err() {
@@ -527,6 +535,10 @@ mod tests {
         assert!(file_command_in(&json!({"command": "file.info"})).is_none());
         assert!(file_command_in(&json!({"command": "text.insert", "params": {"text": "file.save"}})).is_none(), "text that mentions a command is not a command");
         assert!(file_command_in(&json!({"blocks": [{"text": "a"}]})).is_none());
+        // Mail merge writes a file only when given a path.
+        assert_eq!(file_command_in(&json!({"command": "mailings.finish", "params": {"path": "/home/u/thesis.docx"}})).as_deref(), Some("mailings.finish"));
+        assert_eq!(file_command_in(&json!({"commands": [{"command": "mailings.finish", "params": {"path": "/x.docx"}}]})).as_deref(), Some("mailings.finish"));
+        assert!(file_command_in(&json!({"command": "mailings.finish", "params": {}})).is_none());
     }
 
     #[test]
