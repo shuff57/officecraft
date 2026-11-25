@@ -629,6 +629,15 @@ async fn parent_of(path: &str) -> Result<(Js, String, String), String> {
     Ok((dir, name.to_string(), key))
 }
 
+/// Whether Save's handle for `name` is `handle`'s file.
+async fn same_handle(name: &str, handle: &Js) -> bool {
+    let Some(Some(old)) = HANDLES.with(|m| m.borrow().get(name).cloned()) else { return false };
+    match call(&old, "isSameEntry", &[handle.clone()]) {
+        Ok(p) => await_js(p).await.ok().and_then(|v| v.as_bool()).unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
 /// A name a file can be renamed to: not empty, not hidden, no folder separators.
 pub fn check_name(name: &str) -> Result<(), String> {
     let n = name.trim();
@@ -659,6 +668,8 @@ pub fn rename(path: &str, new_name: &str, scans: crate::FolderScans) {
                 return Err(format!("There is already a file named {new_name}."));
             }
             let handle = await_js(call(&dir, "getFileHandle", &[Js::from_str(&name)])?).await?;
+            // Whether an open tab saves to this very file (the name alone may be another file's).
+            let tracked = same_handle(&name, &handle).await;
             let moved = match call(&handle, "move", &[Js::from_str(&new_name)]) {
                 Ok(p) => await_js(p).await.is_ok(),
                 Err(_) => false,
@@ -675,14 +686,12 @@ pub fn rename(path: &str, new_name: &str, scans: crate::FolderScans) {
                 await_js(call(&dir, "removeEntry", &[Js::from_str(&name)])?).await?;
                 copy
             };
-            // An open tab still saves under its old name: point both names at the file.
-            HANDLES.with(|m| {
-                let mut m = m.borrow_mut();
-                if m.contains_key(&name) {
-                    m.insert(name.clone(), Some(handle.clone()));
-                }
-                m.insert(new_name.clone(), Some(handle));
-            });
+            // An open tab of this file still saves under its old name: keep it pointed at the file.
+            if tracked {
+                HANDLES.with(|m| m.borrow_mut().insert(name.clone(), Some(handle.clone())));
+            }
+            // The new name may already stand for another file: then it is ambiguous, not this one.
+            remember_handle(new_name.clone(), handle).await;
             Ok((key, name))
         }
         .await;
@@ -702,9 +711,14 @@ pub fn delete(path: &str, scans: crate::FolderScans) {
     wasm_bindgen_futures::spawn_local(async move {
         let result: Result<(String, String), String> = async {
             let (dir, name, key) = parent_of(&path).await?;
+            let handle = await_js(call(&dir, "getFileHandle", &[Js::from_str(&name)])?).await?;
+            let tracked = same_handle(&name, &handle).await;
             await_js(call(&dir, "removeEntry", &[Js::from_str(&name)])?).await?;
-            // An open tab of it saves as a download from now on.
-            HANDLES.with(|m| m.borrow_mut().remove(&name));
+            // An open tab of this file saves as a download from now on; another file of the same
+            // name keeps its handle.
+            if tracked {
+                HANDLES.with(|m| m.borrow_mut().remove(&name));
+            }
             Ok((key, name))
         }
         .await;

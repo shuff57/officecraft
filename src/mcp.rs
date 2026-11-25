@@ -16,8 +16,9 @@ use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -27,6 +28,10 @@ pub const BASE_PORT: u16 = 7990;
 const PORT_TRIES: u16 = 20;
 /// The largest request body read.
 const MAX_BODY: usize = 8 * 1024 * 1024;
+/// The largest request line plus headers read.
+const MAX_HEAD: usize = 16 * 1024;
+/// Connections served at once; more are turned away.
+const MAX_CONNECTIONS: usize = 32;
 /// How long a tool call may take in the window before the client is told it timed out.
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Protocol versions this server speaks, newest first.
@@ -44,12 +49,19 @@ pub struct Call {
     pub tool: String,
     pub args: Value,
     pub reply: Sender<Reply>,
+    /// The token the request came with: a call whose run has ended (token revoked) is not run.
+    token: String,
+    /// When the client stops waiting: a call still queued then is dropped, never run late.
+    deadline: Instant,
 }
 
 struct Server {
     port: u16,
     calls: Mutex<Vec<Call>>,
     tokens: Mutex<HashSet<String>>,
+    /// The saved token, while Settings lets self-started sessions in.
+    saved: Mutex<Option<String>>,
+    connections: AtomicUsize,
     ctx: egui::Context,
 }
 
@@ -75,11 +87,8 @@ pub fn start(ctx: &egui::Context) -> Result<u16, String> {
     for port in BASE_PORT..BASE_PORT + PORT_TRIES {
         match TcpListener::bind(("127.0.0.1", port)) {
             Ok(listener) => {
-                let mut tokens = HashSet::new();
-                if let Some(t) = saved_token() {
-                    tokens.insert(t);
-                }
-                if SERVER.set(Server { port, calls: Mutex::new(Vec::new()), tokens: Mutex::new(tokens), ctx: ctx.clone() }).is_err() {
+                let server = Server { port, calls: Mutex::new(Vec::new()), tokens: Mutex::new(HashSet::new()), saved: Mutex::new(None), connections: AtomicUsize::new(0), ctx: ctx.clone() };
+                if SERVER.set(server).is_err() {
                     // Another frame started it first.
                     return SERVER.get().map(|s| s.port).ok_or_else(|| "the server did not start".to_string());
                 }
@@ -87,7 +96,21 @@ pub fn start(ctx: &egui::Context) -> Result<u16, String> {
                     .name("officecraft-mcp".into())
                     .spawn(move || {
                         for stream in listener.incoming().flatten() {
-                            let _ = std::thread::Builder::new().name("officecraft-mcp-conn".into()).spawn(move || serve(stream));
+                            let Some(s) = SERVER.get() else { break };
+                            if s.connections.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                                s.connections.fetch_sub(1, Ordering::SeqCst);
+                                respond(stream, "503 Service Unavailable", "");
+                                continue;
+                            }
+                            let spawned = std::thread::Builder::new().name("officecraft-mcp-conn".into()).spawn(move || {
+                                serve(stream);
+                                if let Some(s) = SERVER.get() {
+                                    s.connections.fetch_sub(1, Ordering::SeqCst);
+                                }
+                            });
+                            if spawned.is_err() {
+                                s.connections.fetch_sub(1, Ordering::SeqCst);
+                            }
                         }
                     })
                     .map_err(|e| e.to_string())?;
@@ -100,9 +123,41 @@ pub fn start(ctx: &egui::Context) -> Result<u16, String> {
     Err(format!("no free port from {BASE_PORT}: {last}"))
 }
 
-/// Tool calls waiting for the window, oldest first.
+/// Tool calls waiting for the window, oldest first. Calls whose client gave up waiting are
+/// dropped, and calls from a run that has ended are refused, so nothing runs late.
 pub fn take_calls() -> Vec<Call> {
-    SERVER.get().map(|s| std::mem::take(&mut *s.calls.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
+    let Some(s) = SERVER.get() else { return Vec::new() };
+    let calls = std::mem::take(&mut *s.calls.lock().unwrap_or_else(|e| e.into_inner()));
+    let now = Instant::now();
+    let live = s.tokens.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    calls
+        .into_iter()
+        .filter(|c| {
+            if now >= c.deadline {
+                return false;
+            }
+            if !live.contains(&c.token) {
+                let _ = c.reply.send(Reply::Now(Err("this session has ended".into())));
+                return false;
+            }
+            true
+        })
+        .collect()
+}
+
+/// Lets sessions the user starts themselves in with the saved token (`on`), or stops accepting
+/// it. The server itself stays up; with no token it serves no one.
+pub fn accept_saved(on: bool) {
+    let Some(s) = SERVER.get() else { return };
+    let mut saved = s.saved.lock().unwrap_or_else(|e| e.into_inner());
+    let mut set = s.tokens.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(old) = saved.take() {
+        set.remove(&old);
+    }
+    if on && let Some(t) = saved_token() {
+        set.insert(t.clone());
+        *saved = Some(t);
+    }
 }
 
 /// A token good until [`revoke`]: one per Claude Code run.
@@ -132,28 +187,32 @@ pub fn saved_token() -> Option<String> {
 
 /// A new saved token; the old one stops working at once.
 pub fn new_saved_token() -> Result<String, String> {
-    let old = crate::platform::read("mcp-token").map(|t| t.trim().to_string());
     let t = random_token()?;
     crate::platform::write_private("mcp-token", &t)?;
     if let Some(s) = SERVER.get() {
-        let mut set = s.tokens.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(o) = old {
-            set.remove(&o);
+        let mut saved = s.saved.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(old) = saved.take() {
+            let mut set = s.tokens.lock().unwrap_or_else(|e| e.into_inner());
+            set.remove(&old);
+            set.insert(t.clone());
+            *saved = Some(t.clone());
         }
-        set.insert(t.clone());
     }
     Ok(t)
+}
+
+/// A port from 20000 to 49999, for the far end of an ssh tunnel (two runs at once must not ask
+/// for the same one).
+pub fn random_port() -> u16 {
+    let mut b = [0u8; 2];
+    let _ = getrandom::fill(&mut b);
+    20000 + u16::from_le_bytes(b) % 30000
 }
 
 fn random_token() -> Result<String, String> {
     let mut b = [0u8; 24];
     getrandom::fill(&mut b).map_err(|e| e.to_string())?;
     Ok(b.iter().map(|x| format!("{x:02x}")).collect())
-}
-
-/// Claude Code's `--mcp-config` for this server with `token`.
-pub fn client_config(port: u16, token: &str) -> Value {
-    json!({"mcpServers": {"officecraft": {"type": "http", "url": url(port), "headers": {"Authorization": format!("Bearer {token}")}}}})
 }
 
 // ---- HTTP ----
@@ -171,18 +230,30 @@ impl Request {
     }
 }
 
-fn read_request(stream: &TcpStream) -> Result<Request, String> {
-    stream.set_read_timeout(Some(Duration::from_secs(30))).map_err(|e| e.to_string())?;
-    let mut r = BufReader::new(stream);
-    let mut line = String::new();
-    r.read_line(&mut line).map_err(|e| e.to_string())?;
+/// The request line and headers, at most [`MAX_HEAD`] bytes, read within 30 s in all.
+fn read_head(r: &mut BufReader<&TcpStream>) -> Result<Request, String> {
+    let started = Instant::now();
+    let mut budget = MAX_HEAD;
+    let mut next_line = |r: &mut BufReader<&TcpStream>| -> Result<String, String> {
+        if started.elapsed() > Duration::from_secs(30) {
+            return Err("too slow".into());
+        }
+        let mut buf = Vec::new();
+        let n = r.by_ref().take(budget as u64).read_until(b'\n', &mut buf).map_err(|e| e.to_string())?;
+        budget = budget.saturating_sub(n);
+        if budget == 0 && !buf.ends_with(b"\n") {
+            return Err("request head too large".into());
+        }
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    };
+    let line = next_line(r)?;
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
     let mut headers = Vec::new();
     loop {
-        let mut h = String::new();
-        if r.read_line(&mut h).map_err(|e| e.to_string())? == 0 {
+        let h = next_line(r)?;
+        if h.is_empty() {
             break;
         }
         let h = h.trim_end();
@@ -196,13 +267,22 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
             headers.push((k.trim().to_string(), v.trim().to_string()));
         }
     }
-    let len = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.parse::<usize>().ok()).unwrap_or(0);
+    Ok(Request { method, path, headers, body: Vec::new() })
+}
+
+/// The body the head announced, at most [`MAX_BODY`] bytes.
+fn read_body(r: &mut BufReader<&TcpStream>, req: &mut Request) -> Result<(), String> {
+    let len = req.header("content-length").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
     if len > MAX_BODY {
         return Err("request too large".into());
     }
-    let mut body = vec![0; len];
-    r.read_exact(&mut body).map_err(|e| e.to_string())?;
-    Ok(Request { method, path, headers, body })
+    let mut body = Vec::new();
+    r.by_ref().take(len as u64).read_to_end(&mut body).map_err(|e| e.to_string())?;
+    if body.len() != len {
+        return Err("short body".into());
+    }
+    req.body = body;
+    Ok(())
 }
 
 fn respond(mut stream: TcpStream, status: &str, body: &str) {
@@ -223,11 +303,18 @@ fn origin_ok(origin: Option<&str>) -> bool {
     matches!(name.as_str(), "127.0.0.1" | "localhost" | "[::1]")
 }
 
-fn authorized(s: &Server, auth: Option<&str>) -> bool {
-    let Some(t) = auth.and_then(|a| a.strip_prefix("Bearer ").or_else(|| a.strip_prefix("bearer "))) else { return false };
+/// The accepted token the request carries, if any.
+fn authorized(s: &Server, auth: Option<&str>) -> Option<String> {
+    let t = auth.and_then(|a| a.strip_prefix("Bearer ").or_else(|| a.strip_prefix("bearer ")))?.trim();
     let set = s.tokens.lock().unwrap_or_else(|e| e.into_inner());
-    // Compared in full whatever matches first, so the time taken says nothing about the token.
-    set.iter().fold(false, |found, k| found | constant_eq(k.as_bytes(), t.trim().as_bytes()))
+    // Every token is compared in full, so the time taken says nothing about which one matched.
+    let mut found = None;
+    for k in set.iter() {
+        if constant_eq(k.as_bytes(), t.as_bytes()) {
+            found = Some(k.clone());
+        }
+    }
+    found
 }
 
 fn constant_eq(a: &[u8], b: &[u8]) -> bool {
@@ -236,9 +323,17 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
 
 fn serve(stream: TcpStream) {
     let Some(server) = SERVER.get() else { return };
-    let req = match read_request(&stream) {
-        Ok(r) => r,
-        Err(_) => return respond(stream, "400 Bad Request", ""),
+    if stream.set_read_timeout(Some(Duration::from_secs(30))).is_err() {
+        return;
+    }
+    let mut r = BufReader::new(&stream);
+    // Path, Origin and token are checked before any body is read.
+    let mut req = match read_head(&mut r) {
+        Ok(q) => q,
+        Err(_) => {
+            drop(r);
+            return respond(stream, "400 Bad Request", "");
+        }
     };
     if req.path.split('?').next().map(|p| p.trim_end_matches('/')) != Some("/mcp") {
         return respond(stream, "404 Not Found", "");
@@ -246,22 +341,33 @@ fn serve(stream: TcpStream) {
     if !origin_ok(req.header("origin")) {
         return respond(stream, "403 Forbidden", "");
     }
-    if !authorized(server, req.header("authorization")) {
+    let Some(token) = authorized(server, req.header("authorization")) else {
+        drop(r);
         return respond(stream, "401 Unauthorized", r#"{"error":"a valid bearer token is required"}"#);
-    }
+    };
     match req.method.as_str() {
         "POST" => {}
         // No server-to-client stream, and no session to end.
-        "GET" => return respond(stream, "405 Method Not Allowed", ""),
-        "DELETE" => return respond(stream, "200 OK", ""),
-        _ => return respond(stream, "405 Method Not Allowed", ""),
+        "DELETE" => {
+            drop(r);
+            return respond(stream, "200 OK", "");
+        }
+        _ => {
+            drop(r);
+            return respond(stream, "405 Method Not Allowed", "");
+        }
+    }
+    let body_read = read_body(&mut r, &mut req);
+    drop(r);
+    if body_read.is_err() {
+        return respond(stream, "400 Bad Request", "");
     }
     let Ok(msg) = serde_json::from_slice::<Value>(&req.body) else {
         return respond(stream, "400 Bad Request", &rpc_error(Value::Null, -32700, "parse error").to_string());
     };
     let replies: Vec<Value> = match &msg {
-        Value::Array(batch) => batch.iter().filter_map(|m| handle(server, m)).collect(),
-        m => handle(server, m).into_iter().collect(),
+        Value::Array(batch) => batch.iter().filter_map(|m| handle(server, m, &token)).collect(),
+        m => handle(server, m, &token).into_iter().collect(),
     };
     match (msg.is_array(), replies.len()) {
         (_, 0) => respond(stream, "202 Accepted", ""),
@@ -275,7 +381,7 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
 }
 
 /// One JSON-RPC message; `None` for a notification.
-fn handle(server: &Server, m: &Value) -> Option<Value> {
+fn handle(server: &Server, m: &Value, token: &str) -> Option<Value> {
     let id = m.get("id").cloned()?;
     let method = m.get("method").and_then(Value::as_str).unwrap_or("");
     let params = m.get("params").cloned().unwrap_or(Value::Null);
@@ -299,7 +405,7 @@ fn handle(server: &Server, m: &Value) -> Option<Value> {
             if !tool_definitions().iter().any(|d| d["name"] == tool.as_str()) {
                 return Some(rpc_error(id, -32602, &format!("unknown tool {tool}")));
             }
-            let (text, is_error) = match call_window(server, tool, args) {
+            let (text, is_error) = match call_window(server, tool, args, token) {
                 Ok(v) => (match v {
                     Value::String(s) => s,
                     other => other.to_string(),
@@ -313,9 +419,10 @@ fn handle(server: &Server, m: &Value) -> Option<Value> {
 }
 
 /// Hands a tool call to the window and waits for its answer.
-fn call_window(server: &Server, tool: String, args: Value) -> Result<Value, String> {
+fn call_window(server: &Server, tool: String, args: Value, token: &str) -> Result<Value, String> {
     let (tx, rx) = channel();
-    server.calls.lock().unwrap_or_else(|e| e.into_inner()).push(Call { tool, args, reply: tx });
+    let call = Call { tool, args, reply: tx, token: token.to_string(), deadline: Instant::now() + CALL_TIMEOUT };
+    server.calls.lock().unwrap_or_else(|e| e.into_inner()).push(call);
     server.ctx.request_repaint();
     match rx.recv_timeout(CALL_TIMEOUT) {
         Ok(Reply::Now(r)) => r,
@@ -346,9 +453,9 @@ pub fn tool_definitions() -> Vec<Value> {
         json!({"name": "show_tab", "description": "Bring a tab to the front for the user.",
                "inputSchema": {"type": "object", "properties": {"tab": tab}, "required": ["tab"]}}),
         json!({"name": "send_to", "description": "Convert a tab's document with OfficeCraft's Send to: docs → slides (from the outline), slides → docs, sheets → docs or slides (as a table), graph → docs or slides (as a picture). Into a new tab, or into an open tab with `into`. Or to a PDF file with `pdf_path`, opened in a PDF tab.",
-               "inputSchema": {"type": "object", "properties": {"tab": tab, "to": {"type": "string", "enum": ["docs", "slides", "pdf"]}, "into": {"type": "integer", "description": "an open tab to add to, instead of a new one"}, "pdf_path": {"type": "string", "description": "for to=pdf: absolute path of the PDF to write"}}, "required": ["tab", "to"]}}),
-        json!({"name": "save", "description": "Save a tab's document: to its own file, or to `path` (Save As; the extension picks the format, e.g. .docx, .xlsx, .pptx). An unsaved new document needs a path.",
-               "inputSchema": {"type": "object", "properties": {"tab": tab, "path": {"type": "string"}}, "required": ["tab"]}}),
+               "inputSchema": {"type": "object", "properties": {"tab": tab, "to": {"type": "string", "enum": ["docs", "slides", "pdf"]}, "into": {"type": "integer", "description": "an open tab to add to, instead of a new one"}, "pdf_path": {"type": "string", "description": "for to=pdf: absolute path of the PDF to write"}, "overwrite": {"type": "boolean", "description": "replace an existing file at pdf_path (only when the user asked)"}}, "required": ["tab", "to"]}}),
+        json!({"name": "save", "description": "Save a tab's document: to its own file, or to `path` (Save As; the extension picks the format, e.g. .docx, .xlsx, .pptx). An unsaved new document needs a path. An existing file at `path` is not replaced unless `overwrite` is true.",
+               "inputSchema": {"type": "object", "properties": {"tab": tab, "path": {"type": "string"}, "overwrite": {"type": "boolean", "description": "replace an existing file at path (only when the user asked)"}}, "required": ["tab"]}}),
     ]
 }
 
@@ -393,7 +500,8 @@ mod tests {
     #[test]
     fn notifications_get_no_reply_and_unknown_methods_an_error() {
         let ctx = egui::Context::default();
-        let s = Server { port: 0, calls: Mutex::new(Vec::new()), tokens: Mutex::new(HashSet::new()), ctx };
+        let s = Server { port: 0, calls: Mutex::new(Vec::new()), tokens: Mutex::new(HashSet::new()), saved: Mutex::new(None), connections: AtomicUsize::new(0), ctx };
+        let handle = |s: &Server, m: &Value| handle(s, m, "t");
         assert!(handle(&s, &json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).is_none());
         let r = handle(&s, &json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}})).unwrap();
         assert_eq!(r["result"]["protocolVersion"], "2025-03-26");
@@ -411,10 +519,17 @@ mod tests {
     #[test]
     fn a_bearer_token_from_the_set_is_required() {
         let ctx = egui::Context::default();
-        let s = Server { port: 0, calls: Mutex::new(Vec::new()), tokens: Mutex::new(HashSet::from(["t0ken".to_string()])), ctx };
-        assert!(authorized(&s, Some("Bearer t0ken")));
-        assert!(!authorized(&s, Some("Bearer t0ke")));
-        assert!(!authorized(&s, Some("t0ken")));
-        assert!(!authorized(&s, None));
+        let s = Server { port: 0, calls: Mutex::new(Vec::new()), tokens: Mutex::new(HashSet::from(["t0ken".to_string()])), saved: Mutex::new(None), connections: AtomicUsize::new(0), ctx };
+        assert_eq!(authorized(&s, Some("Bearer t0ken")).as_deref(), Some("t0ken"));
+        assert!(authorized(&s, Some("Bearer t0ke")).is_none());
+        assert!(authorized(&s, Some("t0ken")).is_none());
+        assert!(authorized(&s, None).is_none());
+    }
+
+    #[test]
+    fn tunnel_ports_are_in_range() {
+        for _ in 0..50 {
+            assert!((20000..50000).contains(&random_port()));
+        }
     }
 }

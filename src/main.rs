@@ -3072,6 +3072,13 @@ impl Suite {
                 self.toast = Some((format!("Couldn't start the Claude Code connection: {e}"), true, ctx.input(|i| i.time)));
             }
         }
+        // The saved token works only while Settings lets self-started sessions in, whoever
+        // started the server (a Claude Code run, or that setting).
+        static ACCEPTING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+        let want = if self.ai_cfg.mcp_listen { 1 } else { 2 };
+        if mcp::port().is_some() && ACCEPTING.swap(want, std::sync::atomic::Ordering::Relaxed) != want {
+            mcp::accept_saved(want == 1);
+        }
         for call in mcp::take_calls() {
             let reply = self.mcp_tool(ctx, &call.tool, &call.args);
             let _ = call.reply.send(reply);
@@ -3084,6 +3091,7 @@ impl Suite {
         use mcp::Reply::{Later, Now};
         use serde_json::json;
         let tab = args.get("tab").and_then(serde_json::Value::as_u64);
+        let overwrite = args.get("overwrite").and_then(serde_json::Value::as_bool).unwrap_or(false);
         let s = |k: &str| args.get(k).and_then(serde_json::Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
         let no_tab = |id: Option<u64>| match id {
             Some(id) => format!("there is no tab {id} (see list_tabs)"),
@@ -3167,6 +3175,9 @@ impl Suite {
                 let to = s("to").unwrap_or_default();
                 if to == "pdf" {
                     let Some(path) = s("pdf_path") else { return Now(Err("to=pdf needs `pdf_path`".into())) };
+                    if std::path::Path::new(&path).exists() && !overwrite {
+                        return Now(Err(format!("{path} already exists: pass overwrite=true only if the user asked to replace it")));
+                    }
                     let r = self.send_pdf(ctx, from, &path);
                     let opened = self.entries.iter().find(|e| e.path.as_deref() == Some(canonical_path(&path).as_str())).map(|e| e.id);
                     return Now(r.map(|said| json!({ "said": said, "tab": opened })));
@@ -3198,11 +3209,16 @@ impl Suite {
                 if !matches!(e.kind, Kind::Word | Kind::Grid | Kind::Deck) {
                     return Now(Err(format!("save a {} tab with its own tools", e.kind.label())));
                 }
+                let own = e.path.clone();
                 let r = match s("path") {
                     Some(path) => {
                         let canonical = canonical_path(&path);
                         if self.entries.iter().any(|o| o.id != id && o.path.as_deref() == Some(canonical.as_str())) {
                             return Now(Err(format!("{} is open in another tab", file_name_of(&path))));
+                        }
+                        // Never over another file unless asked (the UI's Save As asks too).
+                        if std::path::Path::new(&path).exists() && own.as_deref() != Some(canonical.as_str()) && !overwrite {
+                            return Now(Err(format!("{path} already exists: pass overwrite=true only if the user asked to replace it")));
                         }
                         self.tab_run(ctx, id, "file.saveAs", json!({ "path": path }))
                     }
@@ -3317,7 +3333,7 @@ impl Suite {
                 });
                 let can = !self.make_prompt.trim().is_empty();
                 let btn = egui::Button::new(b("Make it", 14.0).color(egui::Color32::WHITE)).fill(if can { ACCENT } else { MUTED }).corner_radius(8.0).min_size(egui::vec2(80.0, 30.0));
-                if ui.add_enabled(can, btn).on_hover_text(format!("Opens a new {} tab and asks its assistant to make it ({})", picked.label(), self.ai_cfg.model)).clicked() {
+                if ui.add_enabled(can, btn).on_hover_text(if self.ai_cfg.model.is_empty() { format!("Opens a new {} tab and asks its assistant to make it", picked.label()) } else { format!("Opens a new {} tab and asks its assistant to make it ({})", picked.label(), self.ai_cfg.model) }).clicked() {
                     go = true;
                 }
             });
@@ -3400,6 +3416,12 @@ impl Suite {
 
     /// A tab a conversion made and then could not fill: gone again, with nothing to save.
     fn drop_made_tab(&mut self, id: u64, back: View) {
+        // A deck's recovery copy goes only when its document is closed (see `close`).
+        if let Some(Tab::Deck(a)) = self.entry_mut(id).map(|e| &mut e.tab) {
+            while !a.session.documents().is_empty() {
+                a.session.close_document(0);
+            }
+        }
         self.entries.retain(|e| e.id != id);
         self.tiles.retain(|t| *t != id);
         self.view = back;
@@ -3498,8 +3520,7 @@ impl Suite {
                     .and_then(|v| v.get("slideSize").and_then(serde_json::Value::as_array).and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))))
                     .unwrap_or(probe);
                 let r = convert::slide_table(&read, size).and_then(|(params, cut)| {
-                    self.new_slide_for(ctx, dest, fresh, "titleOnly", &convert::stem(&name))?;
-                    self.tab_run(ctx, dest, "insert.table", params)?;
+                    self.new_slide_for(ctx, dest, fresh, "titleOnly", &convert::stem(&name), |s| s.tab_run(ctx, dest, "insert.table", params).map(|_| ()))?;
                     let (mr, mc) = convert::SLIDE_TABLE_MAX;
                     Ok(if cut { format!("Sent {range} from {name}: the first {mr} rows and {mc} columns fit on the slide.") } else { format!("Sent {range} from {name}.") })
                 });
@@ -3518,8 +3539,7 @@ impl Suite {
                         let _ = self.tab_run(ctx, dest, "select.collapse", serde_json::json!({ "end": true }));
                     })
                 } else {
-                    self.new_slide_for(ctx, dest, fresh, "blank", "")
-                        .and_then(|_| self.tab_run(ctx, dest, "insert.picture", serde_json::json!({ "data": graphpic::base64_encode(&png), "name": "graph.png" })).map(|_| ()))
+                    self.new_slide_for(ctx, dest, fresh, "blank", "", |s| s.tab_run(ctx, dest, "insert.picture", serde_json::json!({ "data": graphpic::base64_encode(&png), "name": "graph.png" })).map(|_| ()))
                 };
                 (dest, fresh, r.map(|_| format!("Sent the graph from {name}.")))
             }
@@ -3560,18 +3580,26 @@ impl Suite {
         Ok((text, html, range))
     }
 
-    /// A new slide in deck `id` to put something on, with `layout` and `title`. A deck made for
-    /// this has its empty first slide replaced.
-    fn new_slide_for(&mut self, ctx: &egui::Context, id: u64, fresh: bool, layout: &str, title: &str) -> Result<(), String> {
+    /// A new slide in deck `id` with `layout` and `title`, then `fill` to put something on it. A
+    /// deck made for this has its empty first slide replaced; in an open deck, the slide is taken
+    /// out again when `fill` fails.
+    fn new_slide_for(&mut self, ctx: &egui::Context, id: u64, fresh: bool, layout: &str, title: &str, fill: impl FnOnce(&mut Suite) -> Result<(), String>) -> Result<(), String> {
         let mut p = serde_json::json!({ "layout": layout });
         if !title.is_empty() {
             p["title"] = serde_json::json!(title);
         }
-        self.tab_run(ctx, id, "slide.new", p)?;
+        let made = self.tab_run(ctx, id, "slide.new", p)?;
         if fresh {
             self.tab_run(ctx, id, "slide.delete", serde_json::json!({ "index": 0 }))?;
         }
-        Ok(())
+        let r = fill(self);
+        if r.is_err()
+            && !fresh
+            && let Some(i) = made.get("index").and_then(serde_json::Value::as_u64)
+        {
+            let _ = self.tab_run(ctx, id, "slide.delete", serde_json::json!({ "index": i }));
+        }
+        r
     }
 
     /// Docs, Sheets or Slides → a PDF at `path`, opened in a PDF tab (desktop).
@@ -4672,6 +4700,11 @@ impl eframe::App for Suite {
         self.equation_inserts(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.serve_mcp(ctx);
+        // A Claude Code run keeps going when its tab is not in front: follow every one, so its
+        // card fills in and it ends (stopping its process, retiring its token) when it is done.
+        for e in &mut self.entries {
+            e.chat.poll_claude(ctx);
+        }
         #[cfg(target_arch = "wasm32")]
         {
             static TEST_FOLDER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

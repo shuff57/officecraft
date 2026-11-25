@@ -205,6 +205,9 @@ pub struct Settings {
     /// The host the custom endpoint's key was entered for: the key is cleared when the endpoint
     /// moves to another host, so it never goes somewhere it wasn't meant for.
     key_host: String,
+    /// The saved MCP token, read once when the Claude Code section is first shown.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    mcp_token: Option<String>,
 }
 
 /// The host (and port) of an endpoint URL, lowercased: `https://API.x.com:8443/v1` → `api.x.com:8443`.
@@ -233,7 +236,7 @@ struct Probe {
 
 impl Settings {
     pub fn new(cfg: &Config) -> Settings {
-        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default(), probe: Default::default(), free_only: true, key_host: url_host(&cfg.local_url) }
+        Settings { draft: cfg.clone(), reveal: false, saved_note: String::new(), test: Default::default(), probe: Default::default(), free_only: true, key_host: url_host(&cfg.local_url), mcp_token: None }
     }
 
     /// `Some(Some(cfg))`: saved; `Some(None)`: closed without saving; `None`: still open.
@@ -351,7 +354,7 @@ impl Settings {
                     Provider::Local => "Any OpenAI-compatible API: a local server (Ollama, LM Studio, llama.cpp, vLLM), your own gateway, or a pay-as-you-go service such as DeepSeek or Groq. A hosted service gets your prompts and documents.",
                     Provider::Cloud => "Large hosted models. Your prompts and documents are sent to ollama.com.",
                     Provider::OpenRouter => "Many hosted models. Your prompts and documents are sent to openrouter.ai and on to the lab running the model.",
-                    Provider::ClaudeCode => "Your own Claude Code and Claude plan: it edits the open documents live, step by step, through OfficeCraft only (no shell, no other files). For another computer, write the ssh command that reaches it, e.g. ssh my-nas claude; OfficeCraft adds the tunnel back. Sign in to Claude Code there first.",
+                    Provider::ClaudeCode => "Your own Claude Code and Claude plan: it edits the open documents live, step by step, with OfficeCraft's tools only (no shell). It can open files and save to a path, but never replaces an existing file unless asked. For another computer, write the ssh command that reaches it, e.g. ssh my-nas claude; OfficeCraft adds the tunnel back. Sign in to Claude Code there first.",
                 })
                 .size(12.0)
                 .weak(),
@@ -772,17 +775,8 @@ impl Chat {
 
     /// Stops a Claude Code turn (if any) and retires its token.
     fn end_claude(&mut self) {
-        if let Some(run) = self.claude.take() {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if let Some(mut c) = run.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                    let _ = c.kill();
-                    let _ = c.wait();
-                }
-                crate::mcp::revoke(&run.token);
-            }
-            let _ = run.token;
-        }
+        // Dropping the run stops its process and revokes its token.
+        self.claude = None;
     }
 
     /// Stops the current request: whatever arrives for it later is dropped.
@@ -1019,7 +1013,7 @@ impl Chat {
     }
 
     /// Shows what a Claude Code turn has done since the last frame.
-    fn poll_claude(&mut self, ctx: &egui::Context) {
+    pub fn poll_claude(&mut self, ctx: &egui::Context) {
         let Some(run) = &self.claude else { return };
         ctx.request_repaint_after(Duration::from_millis(100));
         let mut evs = Vec::new();
@@ -2554,12 +2548,34 @@ enum ClaudeEv {
 }
 
 /// A running `claude -p`: its events, and how to stop it.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 struct ClaudeRun {
     rx: Receiver<ClaudeEv>,
     #[cfg(not(target_arch = "wasm32"))]
     child: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>,
     /// The MCP token this run was given, revoked when it ends.
     token: String,
+    /// Over ssh: the run's stdin, held open until the run ends (its closing stops the remote side).
+    #[cfg(not(target_arch = "wasm32"))]
+    stdin: std::sync::Arc<std::sync::Mutex<Option<std::process::ChildStdin>>>,
+}
+
+impl Drop for ClaudeRun {
+    /// However a run ends (Stop, its answer, its tab closed, the app quitting), its process is
+    /// stopped and its token stops working.
+    fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Closing stdin first lets the far end of an ssh run stop Claude Code there.
+            drop(self.stdin.lock().unwrap_or_else(|e| e.into_inner()).take());
+            let child = self.child.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(mut c) = child {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            crate::mcp::revoke(&self.token);
+        }
+    }
 }
 
 /// `cmd` split into words the way a shell would for simple cases: spaces separate, and single
@@ -2607,13 +2623,31 @@ fn shell_quote(s: &str) -> String {
 /// expands `$HOME` and `$PATH` itself.
 const REMOTE_PATH: &str = "PATH=\"$HOME/.local/bin:$HOME/.claude/local:$HOME/.npm-global/bin:/usr/local/bin:$PATH\"";
 
-/// The program and arguments that run Claude Code for one turn. `cmd` is Settings' command
-/// (`claude`, or `ssh host claude`); over ssh the MCP port is tunnelled back to this computer
-/// and the arguments are quoted for the remote shell. The prompt goes in on stdin.
+/// How one Claude Code turn is started.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-fn claude_argv(cmd: &str, port: u16, mcp_config: &str, system: &str, model: &str, resume: Option<&str>) -> Result<(String, Vec<String>), String> {
+struct Launch {
+    program: String,
+    args: Vec<String>,
+    /// Over ssh: the token goes in as the first line on stdin, before the prompt.
+    ssh: bool,
+}
+
+/// The program and arguments that run Claude Code for one turn. `cmd` is Settings' command
+/// (`claude`, or `ssh host claude`). Locally Claude Code reaches OfficeCraft at `local_port`;
+/// over ssh `-R remote_port:127.0.0.1:local_port` tunnels it back, and the remote side runs
+/// under `sh -c` with Claude Code's install folders on its PATH. The token is never on a command
+/// line: the MCP config names `${OFFICECRAFT_MCP_TOKEN}`, set in the environment locally and read
+/// from stdin's first line over ssh. The prompt goes in on stdin.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn claude_argv(cmd: &str, local_port: u16, remote_port: u16, system: &str, model: &str, resume: Option<&str>) -> Result<Launch, String> {
     let words = split_words(cmd);
     let Some(first) = words.first() else { return Err("Settings has no command for Claude Code".into()) };
+    let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
+    let ssh = base == "ssh" || base == "ssh.exe";
+    if ssh && words.len() < 3 {
+        return Err("write the ssh command in full, with the host and the command: ssh my-nas claude".into());
+    }
+    let port = if ssh { remote_port } else { local_port };
     let mut claude: Vec<String> = vec![
         "-p".into(),
         "--output-format".into(),
@@ -2624,7 +2658,7 @@ fn claude_argv(cmd: &str, port: u16, mcp_config: &str, system: &str, model: &str
         "".into(),
         "--strict-mcp-config".into(),
         "--mcp-config".into(),
-        mcp_config.into(),
+        mcp_config_text(port),
         "--allowedTools".into(),
         "mcp__officecraft".into(),
         "--append-system-prompt".into(),
@@ -2638,21 +2672,50 @@ fn claude_argv(cmd: &str, port: u16, mcp_config: &str, system: &str, model: &str
         claude.push("--resume".into());
         claude.push(id.into());
     }
-    let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
-    if base == "ssh" || base == "ssh.exe" {
-        if words.len() < 3 {
-            return Err("write the ssh command in full, with the host and the command: ssh my-nas claude".into());
-        }
-        let mut args: Vec<String> = vec!["-T".into(), "-o".into(), "BatchMode=yes".into(), "-o".into(), "ExitOnForwardFailure=yes".into(), "-R".into(), format!("{port}:127.0.0.1:{port}")];
-        args.push(words[1].clone());
-        args.push(REMOTE_PATH.into());
-        args.extend(words[2..].iter().cloned());
-        args.extend(claude.iter().map(|a| shell_quote(a)));
-        return Ok((first.clone(), args));
+    if ssh {
+        let program: Vec<String> = words[2..].to_vec();
+        // stdin carries the token's line, the prompt, an end line made from the token, and
+        // then stays open: when OfficeCraft stops the run or the connection drops, it closes, and
+        // the watcher stops Claude Code on that machine too (without a terminal nothing else would).
+        // The watcher reads fd 3, a copy of stdin: sh gives a background job /dev/null instead.
+        let script = format!(
+            "exec 3<&0; IFS= read -r {env}; export {env}; end=\"END-${env}\"; tmp=$(mktemp) || exit 1; trap 'rm -f \"$tmp\"' EXIT; \
+             while IFS= read -r line; do [ \"$line\" = \"$end\" ] && break; printf '%s\\n' \"$line\"; done > \"$tmp\"; \
+             {REMOTE_PATH}; export PATH; {} {} < \"$tmp\" & pid=$!; \
+             {{ cat <&3 > /dev/null; kill \"$pid\" 2> /dev/null; }} > /dev/null 2>&1 & watch=$!; \
+             wait \"$pid\"; status=$?; kill \"$watch\" 2> /dev/null; exit $status",
+            program.join(" "),
+            claude.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "),
+            env = TOKEN_ENV,
+        );
+        let args: Vec<String> = vec![
+            "-T".into(),
+            "-o".into(),
+            "BatchMode=yes".into(),
+            "-o".into(),
+            "ExitOnForwardFailure=yes".into(),
+            "-R".into(),
+            format!("{remote_port}:127.0.0.1:{local_port}"),
+            words[1].clone(),
+            "sh".into(),
+            "-c".into(),
+            shell_quote(&script),
+        ];
+        return Ok(Launch { program: first.clone(), args, ssh: true });
     }
     let mut args: Vec<String> = words[1..].to_vec();
     args.extend(claude);
-    Ok((first.clone(), args))
+    Ok(Launch { program: first.clone(), args, ssh: false })
+}
+
+/// The environment variable the token travels in: Claude Code expands `${…}` in its MCP config.
+const TOKEN_ENV: &str = "OFFICECRAFT_MCP_TOKEN";
+
+/// Claude Code's `--mcp-config` for OfficeCraft's server at `port`. The token is not in it:
+/// Claude Code fills in `${OFFICECRAFT_MCP_TOKEN}` from its environment.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn mcp_config_text(port: u16) -> String {
+    json!({"mcpServers": {"officecraft": {"type": "http", "url": format!("http://127.0.0.1:{port}/mcp"), "headers": {"Authorization": format!("Bearer ${{{TOKEN_ENV}}}")}}}}).to_string()
 }
 
 /// What Claude Code's tool call says in the activity card, and whether it changes a document.
@@ -2743,18 +2806,39 @@ fn claude_version(cmd: &str) -> Result<String, String> {
     let words = split_words(cmd);
     let Some(first) = words.first() else { return Err("no command".into()) };
     let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
-    let mut args: Vec<String> = words[1..].to_vec();
-    if base == "ssh" || base == "ssh.exe" {
-        if args.len() < 2 {
+    let args: Vec<String> = if base == "ssh" || base == "ssh.exe" {
+        if words.len() < 3 {
             return Err("write the ssh command in full, with the host and the command: ssh my-nas claude".into());
         }
-        args.insert(1, REMOTE_PATH.into());
-        args.insert(0, "BatchMode=yes".into());
-        args.insert(0, "-o".into());
-        args.insert(0, "-T".into());
+        let script = format!("{REMOTE_PATH}; export PATH; exec {} --version", words[2..].join(" "));
+        vec!["-T".into(), "-o".into(), "BatchMode=yes".into(), "-o".into(), "ConnectTimeout=10".into(), words[1].clone(), "sh".into(), "-c".into(), shell_quote(&script)]
+    } else {
+        let mut a = words[1..].to_vec();
+        a.push("--version".into());
+        a
+    };
+    let mut child = std::process::Command::new(first)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run {first}: {e}"))?;
+    // A host that takes the connection and then hangs must not leave the test spinning.
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() > std::time::Duration::from_secs(25) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{first} did not answer within 25 seconds"));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => return Err(e.to_string()),
+        }
     }
-    args.push("--version".into());
-    let out = std::process::Command::new(first).args(&args).stdin(std::process::Stdio::null()).output().map_err(|e| format!("could not run {first}: {e}"))?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if out.status.success() && !text.is_empty() {
         Ok(text.lines().next().unwrap_or("").to_string())
@@ -2770,11 +2854,12 @@ fn start_claude(cfg: &Config, prompt: &str, system: &str, resume: Option<&str>, 
     use std::io::{BufRead, Write};
     use std::process::{Command, Stdio};
     let port = crate::mcp::start(ctx)?;
+    let launch = claude_argv(&cfg.claude_command(), port, crate::mcp::random_port(), system, &cfg.model, resume)?;
     let token = crate::mcp::issue_token()?;
-    let config = crate::mcp::client_config(port, &token).to_string();
-    let (program, args) = claude_argv(&cfg.claude_command(), port, &config, system, &cfg.model, resume)?;
-    let mut child = Command::new(&program)
-        .args(&args)
+    let program = launch.program.clone();
+    let mut child = Command::new(&launch.program)
+        .args(&launch.args)
+        .env(TOKEN_ENV, &token)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2783,10 +2868,19 @@ fn start_claude(cfg: &Config, prompt: &str, system: &str, resume: Option<&str>, 
             crate::mcp::revoke(&token);
             if e.kind() == std::io::ErrorKind::NotFound { format!("{program} was not found: install Claude Code, or set the command in Settings") } else { format!("could not start {program}: {e}") }
         })?;
+    let held = std::sync::Arc::new(std::sync::Mutex::new(None));
     if let Some(mut stdin) = child.stdin.take() {
-        let p = prompt.to_string();
+        // Over ssh: the token's line, the prompt, the end line, and stdin stays open for the run.
+        // Locally: the prompt, then end of input.
+        let ssh = launch.ssh;
+        let p = if ssh { format!("{token}\n{prompt}\nEND-{token}\n") } else { prompt.to_string() };
+        let held = held.clone();
         std::thread::spawn(move || {
             let _ = stdin.write_all(p.as_bytes());
+            let _ = stdin.flush();
+            if ssh {
+                *held.lock().unwrap_or_else(|e| e.into_inner()) = Some(stdin);
+            }
         });
     }
     let stdout = child.stdout.take();
@@ -2822,7 +2916,26 @@ fn start_claude(cfg: &Config, prompt: &str, system: &str, resume: Option<&str>, 
                 ctx.request_repaint();
             }
         }
-        let status = waiter.lock().unwrap_or_else(|e| e.into_inner()).take().and_then(|mut c| c.wait().ok());
+        // Wait for the process without holding the lock, so Stop (which kills it) never blocks.
+        let mut status = None;
+        loop {
+            let mut slot = waiter.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(c) = slot.as_mut() else { break };
+            match c.try_wait() {
+                Ok(None) => {}
+                Ok(Some(s)) => {
+                    status = Some(s);
+                    *slot = None;
+                    break;
+                }
+                Err(_) => {
+                    *slot = None;
+                    break;
+                }
+            }
+            drop(slot);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         if !finished {
             // Give the stderr reader a moment to collect the last lines.
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -2836,7 +2949,7 @@ fn start_claude(cfg: &Config, prompt: &str, system: &str, resume: Option<&str>, 
         }
         ctx.request_repaint();
     });
-    Ok(ClaudeRun { rx, child, token })
+    Ok(ClaudeRun { rx, child, token, stdin: held })
 }
 
 /// What Claude Code is told about where it is, appended to its own system prompt.
@@ -2863,7 +2976,10 @@ impl Settings {
             return;
         }
         let port = crate::mcp::port().unwrap_or(crate::mcp::BASE_PORT);
-        let token = crate::mcp::saved_token().unwrap_or_default();
+        if self.mcp_token.is_none() {
+            self.mcp_token = Some(crate::mcp::saved_token().unwrap_or_default());
+        }
+        let token = self.mcp_token.clone().unwrap_or_default();
         let command = |t: &str| format!("claude mcp add --transport http officecraft {} --header \"Authorization: Bearer {t}\"", crate::mcp::url(port));
         ui.label(
             egui::RichText::new(format!(
@@ -2882,7 +2998,10 @@ impl Settings {
             ui.checkbox(&mut self.reveal, "Show token");
             if ui.button("New token").on_hover_text("The old token stops working; run the new command again").clicked() {
                 self.saved_note = match crate::mcp::new_saved_token() {
-                    Ok(_) => "Made a new token: run the new command again.".into(),
+                    Ok(t) => {
+                        self.mcp_token = Some(t);
+                        "Made a new token: run the new command again.".into()
+                    }
                     Err(e) => format!("Could not make a new token: {e}"),
                 };
             }
@@ -2912,29 +3031,92 @@ mod claude_tests {
 
     #[test]
     fn a_local_command_runs_claude_with_only_officecraft_tools() {
-        let (prog, args) = claude_argv("claude", 7990, "{}", "sys", "", None).unwrap();
-        assert_eq!(prog, "claude");
-        let joined = args.join(" ");
-        assert!(joined.starts_with("-p --output-format stream-json --verbose --tools  --strict-mcp-config --mcp-config {}"), "{joined}");
-        assert!(args.windows(2).any(|w| w == ["--allowedTools", "mcp__officecraft"]));
-        assert!(!args.contains(&"--model".to_string()) && !args.contains(&"--resume".to_string()));
-        let (_, args) = claude_argv("claude", 7990, "{}", "sys", "opus", Some("abc")).unwrap();
-        assert!(args.windows(2).any(|w| w == ["--model", "opus"]) && args.windows(2).any(|w| w == ["--resume", "abc"]));
+        let l = claude_argv("claude", 7990, 31000, "sys", "", None).unwrap();
+        assert_eq!(l.program, "claude");
+        assert!(!l.ssh);
+        let joined = l.args.join(" ");
+        assert!(joined.starts_with("-p --output-format stream-json --verbose --tools  --strict-mcp-config --mcp-config "), "{joined}");
+        assert!(joined.contains("127.0.0.1:7990/mcp") && joined.contains("Bearer ${OFFICECRAFT_MCP_TOKEN}"), "the local port, and no token: {joined}");
+        assert!(l.args.windows(2).any(|w| w == ["--allowedTools", "mcp__officecraft"]));
+        assert!(!l.args.contains(&"--model".to_string()) && !l.args.contains(&"--resume".to_string()));
+        let l = claude_argv("claude", 7990, 31000, "sys", "opus", Some("abc")).unwrap();
+        assert!(l.args.windows(2).any(|w| w == ["--model", "opus"]) && l.args.windows(2).any(|w| w == ["--resume", "abc"]));
     }
 
     #[test]
-    fn over_ssh_the_port_comes_back_and_arguments_are_quoted() {
-        let (prog, args) = claude_argv("ssh my-nas claude", 7991, r#"{"x": "y"}"#, "be good", "", None).unwrap();
-        assert_eq!(prog, "ssh");
-        assert_eq!(&args[..7], ["-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-R", "7991:127.0.0.1:7991"]);
-        assert_eq!(args[7], "my-nas");
-        assert_eq!(args[8], REMOTE_PATH, "the remote PATH gets Claude Code's install folders");
-        assert_eq!(args[9], "claude");
-        assert!(args.contains(&"''".to_string()), "the empty --tools value survives the remote shell");
-        assert!(args.contains(&r#"'{"x": "y"}'"#.to_string()));
-        assert!(args.contains(&"'be good'".to_string()));
-        assert!(claude_argv("ssh my-nas", 7991, "{}", "s", "", None).is_err());
-        assert!(claude_argv("", 7991, "{}", "s", "", None).is_err());
+    fn over_ssh_the_port_comes_back_and_the_remote_script_is_quoted() {
+        let l = claude_argv("ssh my-nas claude", 7991, 31234, "be 'good'", "", None).unwrap();
+        assert_eq!(l.program, "ssh");
+        assert!(l.ssh);
+        assert_eq!(&l.args[..7], ["-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-R", "31234:127.0.0.1:7991"]);
+        assert_eq!(&l.args[7..10], ["my-nas", "sh", "-c"]);
+        assert_eq!(l.args.len(), 11, "the whole remote side is one quoted word for the login shell");
+        let script = &l.args[10];
+        assert!(script.starts_with("'exec 3<&0; IFS= read -r OFFICECRAFT_MCP_TOKEN; export OFFICECRAFT_MCP_TOKEN;"), "{script}");
+        assert!(script.contains("127.0.0.1:31234/mcp"), "the far end uses the tunnel's port: {script}");
+        assert!(!script.contains("Bearer ") || script.contains("Bearer ${OFFICECRAFT_MCP_TOKEN}"), "no token in the script");
+        assert!(claude_argv("ssh my-nas", 7991, 31234, "s", "", None).is_err());
+        assert!(claude_argv("", 7991, 31234, "s", "", None).is_err());
+    }
+
+    /// Runs the remote side of an ssh launch with `sh`, a fake `claude` in a temporary HOME, and
+    /// the stdin OfficeCraft sends. `hold`: keep stdin open this long before closing it.
+    #[cfg(unix)]
+    fn run_remote_script(fake_claude: &str, input: &str, hold: std::time::Duration) -> (String, std::time::Duration) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let home = std::env::temp_dir().join(format!("oc-remote-test-{}-{}", std::process::id(), crate::ai::claude_tests::COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+        let bin = home.join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let fake = bin.join("claude");
+        std::fs::write(&fake, fake_claude).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let l = claude_argv("ssh host claude", 7990, 31000, "sys", "", None).unwrap();
+        // What sshd does: the words after the host, joined, run by the login shell.
+        let remote = l.args[8..].join(" ");
+        let started = std::time::Instant::now();
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&remote)
+            .env("HOME", &home)
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+        std::thread::sleep(hold);
+        drop(stdin);
+        let out = child.wait_with_output().unwrap();
+        let _ = std::fs::remove_dir_all(&home);
+        (String::from_utf8_lossy(&out.stdout).into_owned(), started.elapsed())
+    }
+
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    #[cfg(unix)]
+    #[test]
+    fn the_remote_script_passes_the_prompt_and_token_and_stops_when_stdin_closes() {
+        // A claude that echoes its prompt and the token it sees, then would run for a long time.
+        // (One process, like Claude Code with its tools off: `exec`, so the kill reaches the sleep.)
+        let fake = "#!/bin/sh\necho \"token=$OFFICECRAFT_MCP_TOKEN\"\ncat\necho done-reading\nexec sleep 30\n";
+        let input = "tok123\nline one\nEND-not-it\nline 'two' $HOME\nEND-tok123\n";
+        let (out, took) = run_remote_script(fake, input, std::time::Duration::from_millis(800));
+        assert!(out.contains("token=tok123"), "{out}");
+        assert!(out.contains("line one\nEND-not-it\nline 'two' $HOME\ndone-reading"), "the prompt, taken literally: {out}");
+        assert!(!out.contains("END-tok123"), "the end line is not part of the prompt: {out}");
+        assert!(took < std::time::Duration::from_secs(10), "stopped promptly, not after the 30 s sleep: {took:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_remote_script_ends_with_claude_while_stdin_is_still_open() {
+        let fake = "#!/bin/sh\ncat > /dev/null\necho answered\n";
+        let (out, took) = run_remote_script(fake, "t\nhi\nEND-t\n", std::time::Duration::from_millis(1500));
+        assert!(out.contains("answered"), "{out}");
+        // It ended as soon as stdin closed after the hold, or earlier; never hangs.
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
     }
 
     #[test]
