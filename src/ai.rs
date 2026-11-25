@@ -1049,6 +1049,11 @@ impl Chat {
                 }
                 ClaudeEv::Done(r) => {
                     if let Err(e) = r {
+                        // Claude Code also says the error as its answer (a usage limit, say):
+                        // show it once, as the error.
+                        if matches!(self.items.last(), Some(Item::Assistant(t)) if t.trim() == e.trim()) {
+                            self.items.pop();
+                        }
                         self.items.push(Item::Error(e));
                     }
                     for it in &mut self.items {
@@ -2597,6 +2602,11 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// Put before the remote command over ssh: a non-interactive login often lacks the folders
+/// Claude Code installs into (`~/.local/bin` for the native installer), and the remote shell
+/// expands `$HOME` and `$PATH` itself.
+const REMOTE_PATH: &str = "PATH=\"$HOME/.local/bin:$HOME/.claude/local:$HOME/.npm-global/bin:/usr/local/bin:$PATH\"";
+
 /// The program and arguments that run Claude Code for one turn. `cmd` is Settings' command
 /// (`claude`, or `ssh host claude`); over ssh the MCP port is tunnelled back to this computer
 /// and the arguments are quoted for the remote shell. The prompt goes in on stdin.
@@ -2634,7 +2644,9 @@ fn claude_argv(cmd: &str, port: u16, mcp_config: &str, system: &str, model: &str
             return Err("write the ssh command in full, with the host and the command: ssh my-nas claude".into());
         }
         let mut args: Vec<String> = vec!["-T".into(), "-o".into(), "BatchMode=yes".into(), "-o".into(), "ExitOnForwardFailure=yes".into(), "-R".into(), format!("{port}:127.0.0.1:{port}")];
-        args.extend(words[1..].iter().cloned());
+        args.push(words[1].clone());
+        args.push(REMOTE_PATH.into());
+        args.extend(words[2..].iter().cloned());
         args.extend(claude.iter().map(|a| shell_quote(a)));
         return Ok((first.clone(), args));
     }
@@ -2733,6 +2745,10 @@ fn claude_version(cmd: &str) -> Result<String, String> {
     let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
     let mut args: Vec<String> = words[1..].to_vec();
     if base == "ssh" || base == "ssh.exe" {
+        if args.len() < 2 {
+            return Err("write the ssh command in full, with the host and the command: ssh my-nas claude".into());
+        }
+        args.insert(1, REMOTE_PATH.into());
         args.insert(0, "BatchMode=yes".into());
         args.insert(0, "-o".into());
         args.insert(0, "-T".into());
@@ -2911,7 +2927,9 @@ mod claude_tests {
         let (prog, args) = claude_argv("ssh my-nas claude", 7991, r#"{"x": "y"}"#, "be good", "", None).unwrap();
         assert_eq!(prog, "ssh");
         assert_eq!(&args[..7], ["-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-R", "7991:127.0.0.1:7991"]);
-        assert_eq!(&args[7..9], ["my-nas", "claude"]);
+        assert_eq!(args[7], "my-nas");
+        assert_eq!(args[8], REMOTE_PATH, "the remote PATH gets Claude Code's install folders");
+        assert_eq!(args[9], "claude");
         assert!(args.contains(&"''".to_string()), "the empty --tools value survives the remote shell");
         assert!(args.contains(&r#"'{"x": "y"}'"#.to_string()));
         assert!(args.contains(&"'be good'".to_string()));
