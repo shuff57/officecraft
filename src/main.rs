@@ -3126,7 +3126,12 @@ impl Suite {
                 // Files are written only through `save` and `send_to`, which never replace one
                 // unasked: an app's own file commands are not for outside agents.
                 if let Some(c) = mcp::file_command_in(&arguments) {
-                    return Now(Err(format!("{c} is not available through use_tool: save with the save tool, export a PDF with send_to")));
+                    let how = match c.as_str() {
+                        "mailings.finish" => "run it without a path to merge into a new document, then save that with the save tool",
+                        "edit.repeat" | "tools.macros" => "run the commands themselves instead",
+                        _ => "save with the save tool, export a PDF with send_to",
+                    };
+                    return Now(Err(format!("{c} is not available through use_tool: {how}")));
                 }
                 let Some(e) = tab.and_then(|id| self.entry_mut(id)) else { return Now(Err(no_tab(tab))) };
                 if !e.kind.has_assistant() {
