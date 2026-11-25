@@ -205,8 +205,41 @@ pub fn new_saved_token() -> Result<String, String> {
 /// for the same one).
 pub fn random_port() -> u16 {
     let mut b = [0u8; 2];
-    let _ = getrandom::fill(&mut b);
+    if getrandom::fill(&mut b).is_err() {
+        // No random source: the clock still keeps two runs apart.
+        let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+        b = (n as u16 ^ (n >> 16) as u16).to_le_bytes();
+    }
     20000 + u16::from_le_bytes(b) % 30000
+}
+
+/// An app command an outside agent may not run through `use_tool`: files are written only by
+/// `save` and `send_to`, which refuse to replace a file. Reading file information is allowed.
+pub fn writes_files(command: &str) -> bool {
+    command.starts_with("file.") && !matches!(command, "file.info" | "file.render" | "file.strictReport")
+}
+
+/// The first `file.` command named anywhere in a tool's arguments (`command`, a `batch` list's
+/// `command`s, or an `id`) that [`writes_files`].
+pub fn file_command_in(v: &Value) -> Option<String> {
+    match v {
+        Value::Object(m) => {
+            for (k, x) in m {
+                if matches!(k.as_str(), "command" | "id" | "cmd")
+                    && let Some(c) = x.as_str()
+                    && writes_files(c.trim())
+                {
+                    return Some(c.trim().to_string());
+                }
+                if let Some(c) = file_command_in(x) {
+                    return Some(c);
+                }
+            }
+            None
+        }
+        Value::Array(a) => a.iter().find_map(file_command_in),
+        _ => None,
+    }
 }
 
 fn random_token() -> Result<String, String> {
@@ -232,17 +265,29 @@ impl Request {
 
 /// The request line and headers, at most [`MAX_HEAD`] bytes, read within 30 s in all.
 fn read_head(r: &mut BufReader<&TcpStream>) -> Result<Request, String> {
-    let started = Instant::now();
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut budget = MAX_HEAD;
+    // One line, chunk by chunk: the socket's timeout is re-armed with what is left of the 30 s
+    // before every read, so trickling bytes can't hold a connection past the deadline.
     let mut next_line = |r: &mut BufReader<&TcpStream>| -> Result<String, String> {
-        if started.elapsed() > Duration::from_secs(30) {
-            return Err("too slow".into());
-        }
         let mut buf = Vec::new();
-        let n = r.by_ref().take(budget as u64).read_until(b'\n', &mut buf).map_err(|e| e.to_string())?;
-        budget = budget.saturating_sub(n);
-        if budget == 0 && !buf.ends_with(b"\n") {
-            return Err("request head too large".into());
+        loop {
+            if budget == 0 {
+                return Err("request head too large".into());
+            }
+            let left = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()).ok_or("too slow")?;
+            r.get_ref().set_read_timeout(Some(left)).map_err(|e| e.to_string())?;
+            let chunk = r.fill_buf().map_err(|e| e.to_string())?;
+            if chunk.is_empty() {
+                break;
+            }
+            let take = chunk.iter().position(|b| *b == b'\n').map(|i| i + 1).unwrap_or(chunk.len()).min(budget);
+            buf.extend_from_slice(&chunk[..take]);
+            r.consume(take);
+            budget -= take;
+            if buf.ends_with(b"\n") {
+                break;
+            }
         }
         Ok(String::from_utf8_lossy(&buf).into_owned())
     };
@@ -472,6 +517,16 @@ mod tests {
         assert!(!origin_ok(Some("https://evil.example")));
         assert!(!origin_ok(Some("http://127.0.0.1.evil.example")));
         assert!(!origin_ok(Some("null")));
+    }
+
+    #[test]
+    fn file_writing_commands_are_found_anywhere_in_the_arguments() {
+        assert_eq!(file_command_in(&json!({"command": "file.saveAs", "params": {"path": "/x"}})).as_deref(), Some("file.saveAs"));
+        assert_eq!(file_command_in(&json!({"commands": [{"command": "text.insert"}, {"command": " file.exportPdf"}]})).as_deref(), Some("file.exportPdf"));
+        assert_eq!(file_command_in(&json!({"id": "file.save"})).as_deref(), Some("file.save"));
+        assert!(file_command_in(&json!({"command": "file.info"})).is_none());
+        assert!(file_command_in(&json!({"command": "text.insert", "params": {"text": "file.save"}})).is_none(), "text that mentions a command is not a command");
+        assert!(file_command_in(&json!({"blocks": [{"text": "a"}]})).is_none());
     }
 
     #[test]

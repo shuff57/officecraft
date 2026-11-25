@@ -690,8 +690,12 @@ pub fn rename(path: &str, new_name: &str, scans: crate::FolderScans) {
             if tracked {
                 HANDLES.with(|m| m.borrow_mut().insert(name.clone(), Some(handle.clone())));
             }
-            // The new name may already stand for another file: then it is ambiguous, not this one.
-            remember_handle(new_name.clone(), handle).await;
+            // A tab of another file with the new name keeps saving to that file; otherwise the
+            // new name now means this one.
+            let other = HANDLES.with(|m| m.borrow().contains_key(&new_name));
+            if !other {
+                HANDLES.with(|m| m.borrow_mut().insert(new_name.clone(), Some(handle)));
+            }
             Ok((key, name))
         }
         .await;

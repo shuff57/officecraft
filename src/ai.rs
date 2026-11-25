@@ -2677,12 +2677,13 @@ fn claude_argv(cmd: &str, local_port: u16, remote_port: u16, system: &str, model
         // stdin carries the token's line, the prompt, an end line made from the token, and
         // then stays open: when OfficeCraft stops the run or the connection drops, it closes, and
         // the watcher stops Claude Code on that machine too (without a terminal nothing else would).
-        // The watcher reads fd 3, a copy of stdin: sh gives a background job /dev/null instead.
+        // The watcher reads fd 3, a copy of stdin (sh gives a background job /dev/null), with the
+        // shell's own `read`, so killing the watcher leaves no reader behind.
         let script = format!(
             "exec 3<&0; IFS= read -r {env}; export {env}; end=\"END-${env}\"; tmp=$(mktemp) || exit 1; trap 'rm -f \"$tmp\"' EXIT; \
              while IFS= read -r line; do [ \"$line\" = \"$end\" ] && break; printf '%s\\n' \"$line\"; done > \"$tmp\"; \
              {REMOTE_PATH}; export PATH; {} {} < \"$tmp\" & pid=$!; \
-             {{ cat <&3 > /dev/null; kill \"$pid\" 2> /dev/null; }} > /dev/null 2>&1 & watch=$!; \
+             {{ while IFS= read -r x <&3; do :; done; kill \"$pid\" 2> /dev/null; }} > /dev/null 2>&1 & watch=$!; \
              wait \"$pid\"; status=$?; kill \"$watch\" 2> /dev/null; exit $status",
             program.join(" "),
             claude.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "),
@@ -2857,9 +2858,14 @@ fn start_claude(cfg: &Config, prompt: &str, system: &str, resume: Option<&str>, 
     let launch = claude_argv(&cfg.claude_command(), port, crate::mcp::random_port(), system, &cfg.model, resume)?;
     let token = crate::mcp::issue_token()?;
     let program = launch.program.clone();
-    let mut child = Command::new(&launch.program)
-        .args(&launch.args)
-        .env(TOKEN_ENV, &token)
+    let mut command = Command::new(&launch.program);
+    command.args(&launch.args);
+    // Locally Claude Code reads the token from its environment; over ssh it travels on stdin, and
+    // the local ssh process has no use for it.
+    if !launch.ssh {
+        command.env(TOKEN_ENV, &token);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2929,6 +2935,7 @@ fn start_claude(cfg: &Config, prompt: &str, system: &str, resume: Option<&str>, 
                     break;
                 }
                 Err(_) => {
+                    let _ = c.kill();
                     *slot = None;
                     break;
                 }
@@ -3086,11 +3093,16 @@ mod claude_tests {
             .unwrap();
         let mut stdin = child.stdin.take().unwrap();
         stdin.write_all(input.as_bytes()).unwrap();
-        std::thread::sleep(hold);
-        drop(stdin);
+        // stdin closes after `hold` on its own thread; the time measured is the script's.
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(hold);
+            drop(stdin);
+        });
         let out = child.wait_with_output().unwrap();
+        let took = started.elapsed();
+        holder.join().unwrap();
         let _ = std::fs::remove_dir_all(&home);
-        (String::from_utf8_lossy(&out.stdout).into_owned(), started.elapsed())
+        (String::from_utf8_lossy(&out.stdout).into_owned(), took)
     }
 
     static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -3103,6 +3115,7 @@ mod claude_tests {
         let fake = "#!/bin/sh\necho \"token=$OFFICECRAFT_MCP_TOKEN\"\ncat\necho done-reading\nexec sleep 30\n";
         let input = "tok123\nline one\nEND-not-it\nline 'two' $HOME\nEND-tok123\n";
         let (out, took) = run_remote_script(fake, input, std::time::Duration::from_millis(800));
+        assert!(took >= std::time::Duration::from_millis(700), "it waited for stdin to close: {took:?}");
         assert!(out.contains("token=tok123"), "{out}");
         assert!(out.contains("line one\nEND-not-it\nline 'two' $HOME\ndone-reading"), "the prompt, taken literally: {out}");
         assert!(!out.contains("END-tok123"), "the end line is not part of the prompt: {out}");
@@ -3113,10 +3126,10 @@ mod claude_tests {
     #[test]
     fn the_remote_script_ends_with_claude_while_stdin_is_still_open() {
         let fake = "#!/bin/sh\ncat > /dev/null\necho answered\n";
-        let (out, took) = run_remote_script(fake, "t\nhi\nEND-t\n", std::time::Duration::from_millis(1500));
+        let (out, took) = run_remote_script(fake, "t\nhi\nEND-t\n", std::time::Duration::from_secs(5));
         assert!(out.contains("answered"), "{out}");
-        // It ended as soon as stdin closed after the hold, or earlier; never hangs.
-        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+        // It ended with claude, while stdin was still open (closed only after 5 s).
+        assert!(took < std::time::Duration::from_secs(3), "{took:?}");
     }
 
     #[test]
