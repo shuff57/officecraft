@@ -6712,6 +6712,7 @@ dependencies = [
  "equashion-egui 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=1df2f69)",
  "equashion-layout 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=1df2f69)",
  "equashion-render 0.1.0 (git+https://github.com/shuff57/equaSHion?rev=1df2f69)",
+ "getrandom 0.3.4",
  "gridcraft-engine",
  "gridcraft-mcp",
  "gridcraft-ui-egui",

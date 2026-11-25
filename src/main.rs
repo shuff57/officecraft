@@ -23,6 +23,8 @@ mod updater;
 mod clip;
 #[cfg(not(target_arch = "wasm32"))]
 mod files;
+#[cfg(not(target_arch = "wasm32"))]
+mod mcp;
 #[cfg(target_arch = "wasm32")]
 mod host;
 #[cfg(target_arch = "wasm32")]
@@ -1581,7 +1583,7 @@ impl Suite {
         let id = self.next_id;
         self.next_id += 1;
         let n = self.entries.iter().filter(|e| e.kind == kind).count() + 1;
-        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: ai::Chat::new(), graph_for: None, pdf_client: None, seen_path: None });
+        self.entries.push(Entry { id, kind, name: format!("{} {n}", kind.label()), path: None, tab, chat: { let mut c = ai::Chat::new(); c.tab = id; c }, graph_for: None, pdf_client: None, seen_path: None });
         self.view = View::Tab(id);
         if !kind.tileable() {
             // The Graph and Equations tabs bring their own fonts and layout; they are never tiled.
@@ -2973,6 +2975,161 @@ impl Suite {
     /// The Equations tab's Insert into…: it lists the open Docs and Slides tabs, and an insert it
     /// asked for goes in here, a real equation in Docs, a picture in Slides (DeckCraft has no
     /// equation object). The document's tab comes to the front.
+    /// Claude Code's tool calls (MCP), run between frames on the open tabs.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn serve_mcp(&mut self, ctx: &egui::Context) {
+        // Settings keeps the server on for sessions the user starts: start it once at launch.
+        static TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if self.ai_cfg.mcp_listen && mcp::port().is_none() && !TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            if let Err(e) = mcp::start(ctx) {
+                self.toast = Some((format!("Couldn't start the Claude Code connection: {e}"), true, ctx.input(|i| i.time)));
+            }
+        }
+        for call in mcp::take_calls() {
+            let reply = self.mcp_tool(ctx, &call.tool, &call.args);
+            let _ = call.reply.send(reply);
+        }
+    }
+
+    /// One MCP tool call (see `mcp::tool_definitions`).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mcp_tool(&mut self, ctx: &egui::Context, tool: &str, args: &serde_json::Value) -> mcp::Reply {
+        use mcp::Reply::{Later, Now};
+        use serde_json::json;
+        let tab = args.get("tab").and_then(serde_json::Value::as_u64);
+        let s = |k: &str| args.get(k).and_then(serde_json::Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+        let no_tab = |id: Option<u64>| match id {
+            Some(id) => format!("there is no tab {id} (see list_tabs)"),
+            None => "`tab` is required (see list_tabs)".to_string(),
+        };
+        let app_name = |k: Kind| match k {
+            Kind::Word => "docs",
+            Kind::Grid => "sheets",
+            Kind::Deck => "slides",
+            Kind::Pdf => "pdf",
+            Kind::Graph => "graph",
+            Kind::Equation => "equations",
+            Kind::Vershion => "vershion",
+        };
+        match tool {
+            "list_tabs" => {
+                let tabs: Vec<serde_json::Value> = self
+                    .entries
+                    .iter()
+                    .map(|e| json!({"tab": e.id, "app": app_name(e.kind), "name": e.name, "path": e.path, "unsaved": e.tab.is_dirty(), "front": self.view == View::Tab(e.id), "editable": e.kind.has_assistant()}))
+                    .collect();
+                Now(Ok(json!({ "tabs": tabs })))
+            }
+            "app_tools" => match self.entries.iter().find(|e| Some(e.id) == tab) {
+                Some(e) if e.kind.has_assistant() => Now(Ok(json!(ai::agent_tools(ai_app(e.kind))))),
+                Some(e) => Now(Err(format!("the {} tab has no tools", e.kind.label()))),
+                None => Now(Err(no_tab(tab))),
+            },
+            "use_tool" => {
+                let Some(name) = s("tool") else { return Now(Err("`tool` is required (see app_tools)".into())) };
+                let arguments = args.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                let Some(e) = tab.and_then(|id| self.entry_mut(id)) else { return Now(Err(no_tab(tab))) };
+                if !e.kind.has_assistant() {
+                    return Now(Err(format!("the {} tab has no tools", e.kind.label())));
+                }
+                let app = ai_app(e.kind);
+                let mut host = TabHost { tab: &mut e.tab, client: &mut e.pdf_client, ctx };
+                ctx.request_repaint();
+                match ai::agent_call(&mut host, app, &name, &arguments) {
+                    ai::CallResult::Done(r) => Now(r),
+                    ai::CallResult::Pending(rx) => Later(rx),
+                }
+            }
+            "new_tab" => {
+                let kind = match s("app").as_deref() {
+                    Some("docs" | "doc" | "document" | "word") => Kind::Word,
+                    Some("sheets" | "sheet" | "spreadsheet" | "workbook") => Kind::Grid,
+                    Some("slides" | "slide" | "presentation" | "deck") => Kind::Deck,
+                    Some("graph") => Kind::Graph,
+                    other => return Now(Err(format!("app must be docs, sheets, slides or graph, not {other:?}"))),
+                };
+                let id = self.new_tab(kind);
+                if let Some(n) = s("name")
+                    && let Some(e) = self.entry_mut(id)
+                {
+                    e.name = n;
+                }
+                ctx.request_repaint();
+                Now(Ok(json!({ "tab": id })))
+            }
+            "open_file" => {
+                let Some(path) = s("path") else { return Now(Err("`path` is required".into())) };
+                self.notice = None;
+                self.open_file(ctx, &path);
+                let canonical = canonical_path(&path);
+                match self.entries.iter().find(|e| e.path.as_deref() == Some(canonical.as_str())) {
+                    Some(e) => Now(Ok(json!({ "tab": e.id, "app": app_name(e.kind), "name": e.name }))),
+                    None => Now(Err(self.notice.take().unwrap_or_else(|| format!("could not open {path}")))),
+                }
+            }
+            "show_tab" => match tab.filter(|id| self.entries.iter().any(|e| e.id == *id)) {
+                Some(id) => {
+                    self.view = View::Tab(id);
+                    ctx.request_repaint();
+                    Now(Ok(json!({ "shown": id })))
+                }
+                None => Now(Err(no_tab(tab))),
+            },
+            "send_to" => {
+                let Some(from) = tab.filter(|id| self.entries.iter().any(|e| e.id == *id)) else { return Now(Err(no_tab(tab))) };
+                let to = s("to").unwrap_or_default();
+                if to == "pdf" {
+                    let Some(path) = s("pdf_path") else { return Now(Err("to=pdf needs `pdf_path`".into())) };
+                    let r = self.send_pdf(ctx, from, &path);
+                    let opened = self.entries.iter().find(|e| e.path.as_deref() == Some(canonical_path(&path).as_str())).map(|e| e.id);
+                    return Now(r.map(|said| json!({ "said": said, "tab": opened })));
+                }
+                let kind = match to.as_str() {
+                    "docs" => Kind::Word,
+                    "slides" => Kind::Deck,
+                    other => return Now(Err(format!("to must be docs, slides or pdf, not {other:?}"))),
+                };
+                let dest = match args.get("into").and_then(serde_json::Value::as_u64) {
+                    Some(id) => SendTo::Into(id),
+                    None => SendTo::New(kind),
+                };
+                if let SendTo::Into(id) = dest
+                    && !self.entries.iter().any(|e| e.id == id && e.kind == kind)
+                {
+                    return Now(Err(format!("tab {id} is not an open {} tab", kind.label())));
+                }
+                let r = self.convert_tab(ctx, from, dest);
+                let front = match self.view {
+                    View::Tab(id) => Some(id),
+                    View::Home => None,
+                };
+                Now(r.map(|said| json!({ "said": said, "tab": front })))
+            }
+            "save" => {
+                let Some(e) = tab.and_then(|id| self.entries.iter().find(|e| e.id == id)) else { return Now(Err(no_tab(tab))) };
+                let id = e.id;
+                if !matches!(e.kind, Kind::Word | Kind::Grid | Kind::Deck) {
+                    return Now(Err(format!("save a {} tab with its own tools", e.kind.label())));
+                }
+                let r = match s("path") {
+                    Some(path) => {
+                        let canonical = canonical_path(&path);
+                        if self.entries.iter().any(|o| o.id != id && o.path.as_deref() == Some(canonical.as_str())) {
+                            return Now(Err(format!("{} is open in another tab", file_name_of(&path))));
+                        }
+                        self.tab_run(ctx, id, "file.saveAs", json!({ "path": path }))
+                    }
+                    None if e.tab.current_path().is_none() => return Now(Err("this document has never been saved: give a `path`".into())),
+                    None => self.tab_run(ctx, id, "file.save", json!({})),
+                };
+                self.sync_paths();
+                ctx.request_repaint();
+                Now(r.map(|_| json!({ "saved": self.entries.iter().find(|e| e.id == id).and_then(|e| e.path.clone()) })))
+            }
+            other => Now(Err(format!("unknown tool {other}"))),
+        }
+    }
+
     /// One control call on tab `id`, through the same surface the assistant uses.
     fn tab_call(&mut self, ctx: &egui::Context, id: u64, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
         let e = self.entry_mut(id).ok_or_else(|| "that tab was closed".to_string())?;
@@ -4419,6 +4576,8 @@ impl eframe::App for Suite {
         }
         self.open_requested_decks(ctx);
         self.equation_inserts(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.serve_mcp(ctx);
         self.make_requested_graphs(ctx);
         self.open_double_clicked_graphs(ctx);
         // `OFFICECRAFT_AUTOSEND=<prompt>`: once a tab is open, show its assistant and send the prompt
@@ -4675,6 +4834,13 @@ impl eframe::App for Suite {
             if let Some(cfg) = outcome {
                 self.ai_cfg = cfg;
                 ai::refresh_models();
+                // Claude Code sessions the user starts: the server stays up from now on.
+                #[cfg(not(target_arch = "wasm32"))]
+                if self.ai_cfg.mcp_listen
+                    && let Err(e) = mcp::start(ui.ctx())
+                {
+                    self.toast = Some((format!("Couldn't start the Claude Code connection: {e}"), true, ui.ctx().input(|i| i.time)));
+                }
             }
             self.ai_settings = None;
         }

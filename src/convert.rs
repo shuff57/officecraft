@@ -296,6 +296,7 @@ pub fn slide_table(read: &Value, size: (f64, f64)) -> Result<(Value, bool), Stri
 }
 
 /// The name a converted copy is offered under: `report.docx` → `report.pdf`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn renamed(name: &str, ext: &str) -> String {
     format!("{}.{ext}", stem(name))
 }

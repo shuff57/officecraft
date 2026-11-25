@@ -39,10 +39,17 @@ pub enum Provider {
     Local,
     Cloud,
     OpenRouter,
+    /// The user's own Claude Code (their Claude plan), on this computer or another one over SSH,
+    /// working in the open documents through OfficeCraft's MCP server (desktop only).
+    ClaudeCode,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 3] = [Provider::Local, Provider::Cloud, Provider::OpenRouter];
+    pub const ALL: [Provider; 4] = [Provider::Local, Provider::Cloud, Provider::OpenRouter, Provider::ClaudeCode];
+    /// The providers Settings offers here: a browser page cannot start Claude Code.
+    pub fn offered() -> impl Iterator<Item = Provider> {
+        Provider::ALL.into_iter().filter(|p| *p != Provider::ClaudeCode || cfg!(not(target_arch = "wasm32")))
+    }
     fn index(self) -> usize {
         self as usize
     }
@@ -51,6 +58,7 @@ impl Provider {
             Provider::Local => "local",
             Provider::Cloud => "cloud",
             Provider::OpenRouter => "openrouter",
+            Provider::ClaudeCode => "claude_code",
         }
     }
     fn from_id(s: &str) -> Option<Provider> {
@@ -61,6 +69,7 @@ impl Provider {
             Provider::Local => "Custom endpoint",
             Provider::Cloud => "Ollama Cloud",
             Provider::OpenRouter => "OpenRouter",
+            Provider::ClaudeCode => "Claude Code",
         }
     }
     fn default_base(self) -> &'static str {
@@ -68,6 +77,7 @@ impl Provider {
             Provider::Local => DEFAULT_BASE,
             Provider::Cloud => "https://ollama.com/v1",
             Provider::OpenRouter => "https://openrouter.ai/api/v1",
+            Provider::ClaudeCode => "",
         }
     }
     fn default_model(self) -> &'static str {
@@ -75,6 +85,8 @@ impl Provider {
             Provider::Local => DEFAULT_MODEL,
             Provider::Cloud => "gemma4:31b",
             Provider::OpenRouter => "openai/gpt-oss-120b",
+            // Blank: whatever the user's Claude Code uses by default.
+            Provider::ClaudeCode => "",
         }
     }
 }
@@ -90,11 +102,19 @@ pub struct Config {
     /// The endpoint of the local server (Ollama, LM Studio, llama.cpp, vLLM: anything OpenAI-compatible).
     pub local_url: String,
     /// The chosen model for each provider, in `Provider::ALL` order; empty = that provider's default.
-    models: [String; 3],
+    models: [String; 4],
     /// API keys (`keys[provider.index()]`): the custom endpoint's (optional: a local server needs
-    /// none), Ollama Cloud's and OpenRouter's.
-    keys: [String; 3],
+    /// none), Ollama Cloud's and OpenRouter's. Claude Code needs none (its own login).
+    keys: [String; 4],
+    /// How to start Claude Code: `claude`, or `ssh <host> claude` for another computer (the
+    /// tunnel back to OfficeCraft is added to the ssh command).
+    pub claude_cmd: String,
+    /// Keep the MCP server running for Claude Code sessions the user starts themselves.
+    pub mcp_listen: bool,
 }
+
+/// What `claude_cmd` is when Settings leaves it blank.
+pub const DEFAULT_CLAUDE_CMD: &str = "claude";
 
 fn read_json(name: &str) -> Value {
     platform::read(name).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)
@@ -111,8 +131,10 @@ impl Config {
             key: None,
             provider: Provider::from_id(&get(&json, "provider")).unwrap_or(Provider::Local),
             local_url: get(&json, "base_url"),
-            models: [get(&json, "model"), get(&json, "cloud_model"), get(&json, "openrouter_model")],
-            keys: [get(&keys_json, "custom"), get(&keys_json, "cloud"), get(&keys_json, "openrouter")],
+            models: [get(&json, "model"), get(&json, "cloud_model"), get(&json, "openrouter_model"), get(&json, "claude_model")],
+            keys: [get(&keys_json, "custom"), get(&keys_json, "cloud"), get(&keys_json, "openrouter"), String::new()],
+            claude_cmd: get(&json, "claude_command"),
+            mcp_listen: json.get("mcp_listen").and_then(Value::as_bool).unwrap_or(false),
         };
         c.apply();
         c
@@ -136,6 +158,12 @@ impl Config {
             .or_else(|| if p == Provider::Cloud { env("OLLAMA_API_KEY") } else { None });
     }
 
+    /// The command that starts Claude Code, as Settings has it or the default.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn claude_command(&self) -> String {
+        if self.claude_cmd.trim().is_empty() { DEFAULT_CLAUDE_CMD.to_string() } else { self.claude_cmd.trim().to_string() }
+    }
+
     pub fn set_model(&mut self, model: &str) {
         self.models[self.provider.index()] = model.to_string();
         self.apply();
@@ -154,6 +182,9 @@ impl Config {
             "model": self.models[0],
             "cloud_model": self.models[1],
             "openrouter_model": self.models[2],
+            "claude_model": self.models[3],
+            "claude_command": self.claude_cmd,
+            "mcp_listen": self.mcp_listen,
         });
         platform::write("ai.json", &serde_json::to_string_pretty(&settings).unwrap_or_default())?;
         let keys = json!({"custom": self.keys[0], "cloud": self.keys[1], "openrouter": self.keys[2]});
@@ -215,7 +246,7 @@ impl Settings {
             let d = &mut self.draft;
             ui.label(egui::RichText::new("Provider").strong());
             ui.horizontal(|ui| {
-                for p in Provider::ALL {
+                for p in Provider::offered() {
                     if ui.selectable_label(d.provider == p, p.title()).clicked() {
                         d.provider = p;
                         // A test still running belongs to the other provider: stop it, and let
@@ -281,6 +312,22 @@ impl Settings {
                         });
                         ui.end_row();
                     }
+                    Provider::ClaudeCode => {
+                        ui.label("Runs on");
+                        ui.horizontal(|ui| {
+                            let local = d.claude_cmd.trim().is_empty() || d.claude_cmd.trim() == DEFAULT_CLAUDE_CMD;
+                            if ui.selectable_label(local, "This computer").clicked() {
+                                d.claude_cmd = DEFAULT_CLAUDE_CMD.into();
+                            }
+                            if ui.selectable_label(!local, "Another computer (SSH)").clicked() && local {
+                                d.claude_cmd = "ssh my-nas claude".into();
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Command");
+                        ui.add(egui::TextEdit::singleline(&mut d.claude_cmd).hint_text(DEFAULT_CLAUDE_CMD).desired_width(300.0).font(egui::TextStyle::Monospace));
+                        ui.end_row();
+                    }
                     _ => {
                         ui.label("Endpoint");
                         ui.label(egui::RichText::new(p.default_base()).monospace());
@@ -294,7 +341,8 @@ impl Settings {
                     }
                 }
                 ui.label("Model");
-                ui.add(egui::TextEdit::singleline(&mut d.models[p.index()]).hint_text(p.default_model()).desired_width(300.0));
+                let hint = if p == Provider::ClaudeCode { "default (or sonnet, opus, haiku)" } else { p.default_model() };
+                ui.add(egui::TextEdit::singleline(&mut d.models[p.index()]).hint_text(hint).desired_width(300.0));
                 ui.end_row();
             });
             ui.add_space(4.0);
@@ -303,11 +351,17 @@ impl Settings {
                     Provider::Local => "Any OpenAI-compatible API: a local server (Ollama, LM Studio, llama.cpp, vLLM), your own gateway, or a pay-as-you-go service such as DeepSeek or Groq. A hosted service gets your prompts and documents.",
                     Provider::Cloud => "Large hosted models. Your prompts and documents are sent to ollama.com.",
                     Provider::OpenRouter => "Many hosted models. Your prompts and documents are sent to openrouter.ai and on to the lab running the model.",
+                    Provider::ClaudeCode => "Your own Claude Code and Claude plan: it edits the open documents live, step by step, through OfficeCraft only (no shell, no other files). For another computer, write the ssh command that reaches it, e.g. ssh my-nas claude; OfficeCraft adds the tunnel back. Sign in to Claude Code there first.",
                 })
                 .size(12.0)
                 .weak(),
             );
-            if p != Provider::Local || !d.keys[0].is_empty() {
+            #[cfg(not(target_arch = "wasm32"))]
+            if p == Provider::ClaudeCode {
+                self.mcp_section(ui);
+            }
+            let d = &mut self.draft;
+            if (p != Provider::Local && p != Provider::ClaudeCode) || (p == Provider::Local && !d.keys[0].is_empty()) {
                 ui.label(
                     egui::RichText::new(if cfg!(target_arch = "wasm32") {
                         "The key is kept in this browser's storage for this site. Anyone using this browser profile can read it."
@@ -323,7 +377,24 @@ impl Settings {
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Test connection").clicked() {
+                let test_clicked = ui.button("Test connection").clicked();
+                if test_clicked && self.draft.provider == Provider::ClaudeCode {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let cmd = self.draft.claude_command();
+                        let slot = self.test.clone();
+                        *slot.lock().unwrap() = None;
+                        let ctx = ui.ctx().clone();
+                        std::thread::spawn(move || {
+                            let r = claude_version(&cmd);
+                            *slot.lock().unwrap() = Some(r.map(|v| {
+                                *CLAUDE_VERSION.lock().unwrap_or_else(|e| e.into_inner()) = v;
+                                usize::MAX
+                            }));
+                            ctx.request_repaint();
+                        });
+                    }
+                } else if test_clicked {
                     let mut probe = self.draft.clone();
                     probe.apply();
                     *self.test.lock().unwrap() = None;
@@ -341,6 +412,9 @@ impl Settings {
                     });
                 }
                 match &*self.test.lock().unwrap() {
+                    Some(Ok(usize::MAX)) => {
+                        ui.colored_label(egui::Color32::from_rgb(46, 125, 79), format!("Found {}", CLAUDE_VERSION.lock().unwrap_or_else(|e| e.into_inner())));
+                    }
                     Some(Ok(n)) => {
                         ui.colored_label(egui::Color32::from_rgb(46, 125, 79), format!("Connected: {n} model{}", if *n == 1 { "" } else { "s" }));
                     }
@@ -350,7 +424,9 @@ impl Settings {
                     None => {}
                 }
             });
-            self.model_list(ui);
+            if self.draft.provider != Provider::ClaudeCode {
+                self.model_list(ui);
+            }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 // A hosted service has no default model here: guessing one would fail at the
@@ -607,6 +683,12 @@ pub struct Chat {
     decks: Vec<Value>,
     /// Graphs the model asked for (`create_graph`): `title`, `expressions`, `mode`.
     graphs: Vec<Value>,
+    /// The tab this chat belongs to (Claude Code is told which document "this" is).
+    pub tab: u64,
+    /// A Claude Code turn in progress.
+    claude: Option<ClaudeRun>,
+    /// Claude Code's session, so the next message continues the same conversation.
+    claude_session: Option<String>,
 }
 
 impl Chat {
@@ -627,6 +709,9 @@ impl Chat {
             focus_input: true,
             decks: Vec::new(),
             graphs: Vec::new(),
+            tab: 0,
+            claude: None,
+            claude_session: None,
         }
     }
 
@@ -676,17 +761,34 @@ impl Chat {
     }
 
     pub fn busy(&self) -> bool {
-        self.reply.is_some() || !self.pending.is_empty()
+        self.reply.is_some() || !self.pending.is_empty() || self.claude.is_some()
     }
 
     pub fn clear(&mut self) {
-        let open = self.open;
-        *self = Chat { open, ..Chat::new() };
+        let (open, tab) = (self.open, self.tab);
+        self.end_claude();
+        *self = Chat { open, tab, ..Chat::new() };
+    }
+
+    /// Stops a Claude Code turn (if any) and retires its token.
+    fn end_claude(&mut self) {
+        if let Some(run) = self.claude.take() {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(mut c) = run.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                crate::mcp::revoke(&run.token);
+            }
+            let _ = run.token;
+        }
     }
 
     /// Stops the current request: whatever arrives for it later is dropped.
     fn stop(&mut self) {
         self.epoch += 1;
+        self.end_claude();
         self.reply = None;
         self.pending.clear();
         self.results.clear();
@@ -745,7 +847,8 @@ impl Chat {
                     self.clear();
                 }
                 // The model, as a quiet picker.
-                let label = egui::RichText::new(short_model(&cfg.model)).size(12.0).color(muted);
+                let shown = if cfg.model.is_empty() && cfg.provider == Provider::ClaudeCode { "Claude Code".to_string() } else { short_model(&cfg.model) };
+                let label = egui::RichText::new(shown).size(12.0).color(muted);
                 egui::ComboBox::from_id_salt("assistant_model").selected_text(label).width(150.0).show_ui(ui, |ui| {
                     if models.is_empty() {
                         ui.label(egui::RichText::new("No models found").color(muted));
@@ -890,7 +993,78 @@ impl Chat {
         self.took = None;
         self.started = Some(Instant::now());
         self.focus_input = true;
+        if cfg.provider == Provider::ClaudeCode {
+            self.ask_claude(&text, app, cfg, ctx);
+            return;
+        }
         self.ask(app, cfg, ctx);
+    }
+
+    /// One Claude Code turn, continuing its session when there is one.
+    fn ask_claude(&mut self, text: &str, app: App, cfg: &Config, ctx: &egui::Context) {
+        #[cfg(not(target_arch = "wasm32"))]
+        match start_claude(cfg, text, &claude_system(app, self.tab), self.claude_session.as_deref(), ctx) {
+            Ok(run) => self.claude = Some(run),
+            Err(e) => {
+                self.items.push(Item::Error(e));
+                self.started = None;
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (text, app, cfg, ctx);
+            self.items.push(Item::Error("Claude Code works in the desktop app.".into()));
+            self.started = None;
+        }
+    }
+
+    /// Shows what a Claude Code turn has done since the last frame.
+    fn poll_claude(&mut self, ctx: &egui::Context) {
+        let Some(run) = &self.claude else { return };
+        ctx.request_repaint_after(Duration::from_millis(100));
+        let mut evs = Vec::new();
+        while let Ok(ev) = run.rx.try_recv() {
+            evs.push(ev);
+        }
+        for ev in evs {
+            match ev {
+                ClaudeEv::Text(t) => self.items.push(Item::Assistant(t)),
+                ClaudeEv::Session(id) => self.claude_session = Some(id),
+                ClaudeEv::Tool { id, label, edit } => {
+                    let step = Step { id, label, state: StepState::Running, edit };
+                    match self.items.last_mut() {
+                        Some(Item::Steps(s)) => s.push(step),
+                        _ => self.items.push(Item::Steps(vec![step])),
+                    }
+                }
+                ClaudeEv::ToolDone { id, ok } => {
+                    for it in self.items.iter_mut().rev() {
+                        if let Item::Steps(s) = it
+                            && let Some(st) = s.iter_mut().find(|st| st.id == id)
+                        {
+                            st.state = if ok { StepState::Done } else { StepState::Failed };
+                            break;
+                        }
+                    }
+                }
+                ClaudeEv::Done(r) => {
+                    if let Err(e) = r {
+                        self.items.push(Item::Error(e));
+                    }
+                    for it in &mut self.items {
+                        if let Item::Steps(s) = it {
+                            for st in s.iter_mut().filter(|st| st.state == StepState::Running) {
+                                st.state = StepState::Failed;
+                            }
+                        }
+                    }
+                    self.took = self.started.map(|t| t.elapsed().as_secs_f32());
+                    self.started = None;
+                    self.end_claude();
+                    return;
+                }
+            }
+        }
     }
 
     fn ask(&mut self, app: App, cfg: &Config, ctx: &egui::Context) {
@@ -920,6 +1094,7 @@ impl Chat {
     /// Advances the conversation: reads the model's reply as it streams, runs its tool calls on
     /// `host`, and asks again until it answers in words.
     pub fn poll(&mut self, host: &mut dyn Host, app: App, cfg: &Config, ctx: &egui::Context) {
+        self.poll_claude(ctx);
         if self.reply.is_some() || !self.pending.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(60));
         }
@@ -1777,6 +1952,30 @@ fn tools(app: App) -> Value {
     Value::Array(t)
 }
 
+/// The tools an outside agent (Claude Code over MCP) gets for a tab of `app`, in MCP's shape
+/// (`name`, `description`, `inputSchema`): the assistant's own, less the ones only the chat
+/// panel can carry out (a deck or graph opened beside the document; MCP has `send_to` for that).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub fn agent_tools(app: App) -> Vec<Value> {
+    let Value::Array(defs) = tools(app) else { return Vec::new() };
+    defs.into_iter()
+        .filter_map(|d| {
+            let f = d.get("function")?;
+            let name = f.get("name")?.as_str()?;
+            (!matches!(name, "create_presentation" | "create_graph")).then(|| json!({"name": name, "description": f.get("description"), "inputSchema": f.get("parameters")}))
+        })
+        .collect()
+}
+
+/// Runs one of [`agent_tools`] on `host`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub fn agent_call(host: &mut dyn Host, app: App, name: &str, args: &Value) -> CallResult {
+    if !agent_tools(app).iter().any(|d| d["name"] == name) {
+        return CallResult::Done(Err(format!("{name} is not one of this app's tools (see app_tools)")));
+    }
+    run_tool(host, app, name, args)
+}
+
 /// Maps the model's tool vocabulary onto each app's control methods.
 fn run_tool(host: &mut dyn Host, app: App, name: &str, args: &Value) -> CallResult {
     if app == App::Slides && name == "build_slides" {
@@ -2262,6 +2461,10 @@ pub fn refresh_models() {
 
 /// The model ids the server offers (`GET /models`), fetched once in the background.
 pub fn models(cfg: &Config, ctx: &egui::Context) -> Vec<String> {
+    if cfg.provider == Provider::ClaudeCode {
+        // Claude Code's own aliases; its default when none is chosen.
+        return ["sonnet", "opus", "haiku"].map(String::from).to_vec();
+    }
     let cell = MODELS.get_or_init(|| std::sync::Mutex::new((false, Vec::new())));
     let start = {
         let Ok(mut g) = cell.lock() else { return Vec::new() };
@@ -2327,6 +2530,428 @@ fn salvage_tool_calls(text: &str) -> (String, Vec<(String, String, String)>) {
     // The wrapper tags the model put around them.
     let cleaned = out.replace("<tool_call>", "").replace("</tool_call>", "");
     (cleaned.trim().to_string(), calls)
+}
+
+// ---- Claude Code ----
+
+/// What `claude --version` said the last time Settings tested it.
+static CLAUDE_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// A Claude Code run's events, as the chat shows them.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+enum ClaudeEv {
+    Text(String),
+    Tool { id: String, label: String, edit: bool },
+    ToolDone { id: String, ok: bool },
+    Session(String),
+    /// The run ended: `Err` with what went wrong.
+    Done(Result<(), String>),
+}
+
+/// A running `claude -p`: its events, and how to stop it.
+struct ClaudeRun {
+    rx: Receiver<ClaudeEv>,
+    #[cfg(not(target_arch = "wasm32"))]
+    child: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>,
+    /// The MCP token this run was given, revoked when it ends.
+    token: String,
+}
+
+/// `cmd` split into words the way a shell would for simple cases: spaces separate, and single
+/// or double quotes keep a word together.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn split_words(cmd: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut any = false;
+    for c in cmd.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '\'' || c == '"' => {
+                quote = Some(c);
+                any = true;
+            }
+            None if c.is_whitespace() => {
+                if any || !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                    any = false;
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if any || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// `s` as one word for a POSIX shell (the remote end of ssh runs the command through one).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn shell_quote(s: &str) -> String {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./=:,+@%".contains(c)) {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// The program and arguments that run Claude Code for one turn. `cmd` is Settings' command
+/// (`claude`, or `ssh host claude`); over ssh the MCP port is tunnelled back to this computer
+/// and the arguments are quoted for the remote shell. The prompt goes in on stdin.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn claude_argv(cmd: &str, port: u16, mcp_config: &str, system: &str, model: &str, resume: Option<&str>) -> Result<(String, Vec<String>), String> {
+    let words = split_words(cmd);
+    let Some(first) = words.first() else { return Err("Settings has no command for Claude Code".into()) };
+    let mut claude: Vec<String> = vec![
+        "-p".into(),
+        "--output-format".into(),
+        "stream-json".into(),
+        "--verbose".into(),
+        // No shell, no file tools: only OfficeCraft's.
+        "--tools".into(),
+        "".into(),
+        "--strict-mcp-config".into(),
+        "--mcp-config".into(),
+        mcp_config.into(),
+        "--allowedTools".into(),
+        "mcp__officecraft".into(),
+        "--append-system-prompt".into(),
+        system.into(),
+    ];
+    if !model.trim().is_empty() {
+        claude.push("--model".into());
+        claude.push(model.trim().into());
+    }
+    if let Some(id) = resume {
+        claude.push("--resume".into());
+        claude.push(id.into());
+    }
+    let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
+    if base == "ssh" || base == "ssh.exe" {
+        if words.len() < 3 {
+            return Err("write the ssh command in full, with the host and the command: ssh my-nas claude".into());
+        }
+        let mut args: Vec<String> = vec!["-T".into(), "-o".into(), "BatchMode=yes".into(), "-o".into(), "ExitOnForwardFailure=yes".into(), "-R".into(), format!("{port}:127.0.0.1:{port}")];
+        args.extend(words[1..].iter().cloned());
+        args.extend(claude.iter().map(|a| shell_quote(a)));
+        return Ok((first.clone(), args));
+    }
+    let mut args: Vec<String> = words[1..].to_vec();
+    args.extend(claude);
+    Ok((first.clone(), args))
+}
+
+/// What Claude Code's tool call says in the activity card, and whether it changes a document.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn describe_claude(name: &str, input: &Value) -> (String, bool) {
+    let Some(tool) = name.strip_prefix("mcp__officecraft__") else { return (name.to_string(), false) };
+    let s = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    match tool {
+        "list_tabs" => ("Looked at the open tabs".into(), false),
+        "app_tools" => ("Looked up the app's tools".into(), false),
+        "show_tab" => ("Showed a tab".into(), false),
+        "new_tab" => (format!("Opened a new {} tab", s("app")), true),
+        "open_file" => (format!("Opened {}", s("path").rsplit(['/', '\\']).next().unwrap_or("")), true),
+        "send_to" => (format!("Sent a tab to {}", s("to")), true),
+        "save" => ("Saved".into(), true),
+        "use_tool" => {
+            let inner = s("tool");
+            let args = input.get("arguments").cloned().unwrap_or(Value::Null);
+            (describe(&inner, &args), !is_read_only(&inner, &args))
+        }
+        other => (other.to_string(), false),
+    }
+}
+
+/// One line of `claude -p --output-format stream-json`, as chat events.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn claude_events(line: &str) -> Vec<ClaudeEv> {
+    let Ok(v) = serde_json::from_str::<Value>(line) else { return Vec::new() };
+    let mut out = Vec::new();
+    match v.get("type").and_then(Value::as_str).unwrap_or("") {
+        "system" => {
+            if let Some(id) = v.get("session_id").and_then(Value::as_str) {
+                out.push(ClaudeEv::Session(id.to_string()));
+            }
+            // The tunnel or the token failed: say so now, not after a confused answer.
+            if let Some(servers) = v.get("mcp_servers").and_then(Value::as_array)
+                && let Some(st) = servers.iter().find(|x| x.get("name").and_then(Value::as_str) == Some("officecraft")).and_then(|x| x.get("status").and_then(Value::as_str))
+                && st != "connected"
+            {
+                out.push(ClaudeEv::Done(Err(format!("Claude Code could not reach OfficeCraft ({st}). Over SSH, check that the command reaches the other computer and that port forwarding is allowed there."))));
+            }
+        }
+        "assistant" => {
+            for b in v.pointer("/message/content").and_then(Value::as_array).into_iter().flatten() {
+                match b.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        let t = b.get("text").and_then(Value::as_str).unwrap_or("").trim();
+                        if !t.is_empty() {
+                            out.push(ClaudeEv::Text(t.to_string()));
+                        }
+                    }
+                    Some("tool_use") => {
+                        let (label, edit) = describe_claude(b.get("name").and_then(Value::as_str).unwrap_or(""), b.get("input").unwrap_or(&Value::Null));
+                        out.push(ClaudeEv::Tool { id: b.get("id").and_then(Value::as_str).unwrap_or("").to_string(), label, edit });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "user" => {
+            for b in v.pointer("/message/content").and_then(Value::as_array).into_iter().flatten() {
+                if b.get("type").and_then(Value::as_str) == Some("tool_result") {
+                    let ok = !b.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+                    out.push(ClaudeEv::ToolDone { id: b.get("tool_use_id").and_then(Value::as_str).unwrap_or("").to_string(), ok });
+                }
+            }
+        }
+        "result" => {
+            if let Some(id) = v.get("session_id").and_then(Value::as_str) {
+                out.push(ClaudeEv::Session(id.to_string()));
+            }
+            let err = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+            if err {
+                let why = v.get("result").and_then(Value::as_str).or_else(|| v.get("subtype").and_then(Value::as_str)).unwrap_or("Claude Code stopped with an error");
+                out.push(ClaudeEv::Done(Err(why.to_string())));
+            } else {
+                out.push(ClaudeEv::Done(Ok(())));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// `claude --version` through Settings' command (over ssh too): the version, or why not.
+#[cfg(not(target_arch = "wasm32"))]
+fn claude_version(cmd: &str) -> Result<String, String> {
+    let words = split_words(cmd);
+    let Some(first) = words.first() else { return Err("no command".into()) };
+    let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
+    let mut args: Vec<String> = words[1..].to_vec();
+    if base == "ssh" || base == "ssh.exe" {
+        args.insert(0, "BatchMode=yes".into());
+        args.insert(0, "-o".into());
+        args.insert(0, "-T".into());
+    }
+    args.push("--version".into());
+    let out = std::process::Command::new(first).args(&args).stdin(std::process::Stdio::null()).output().map_err(|e| format!("could not run {first}: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if out.status.success() && !text.is_empty() {
+        Ok(text.lines().next().unwrap_or("").to_string())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if err.is_empty() { format!("{first} exited with {}", out.status) } else { err.lines().last().unwrap_or("").to_string() })
+    }
+}
+
+/// Starts one Claude Code turn: `prompt` in, events out on the returned run.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_claude(cfg: &Config, prompt: &str, system: &str, resume: Option<&str>, ctx: &egui::Context) -> Result<ClaudeRun, String> {
+    use std::io::{BufRead, Write};
+    use std::process::{Command, Stdio};
+    let port = crate::mcp::start(ctx)?;
+    let token = crate::mcp::issue_token()?;
+    let config = crate::mcp::client_config(port, &token).to_string();
+    let (program, args) = claude_argv(&cfg.claude_command(), port, &config, system, &cfg.model, resume)?;
+    let mut child = Command::new(&program)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            crate::mcp::revoke(&token);
+            if e.kind() == std::io::ErrorKind::NotFound { format!("{program} was not found: install Claude Code, or set the command in Settings") } else { format!("could not start {program}: {e}") }
+        })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let p = prompt.to_string();
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(p.as_bytes());
+        });
+    }
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let child = std::sync::Arc::new(std::sync::Mutex::new(Some(child)));
+    let (tx, rx) = channel();
+    // What Claude Code (or ssh) wrote to stderr: the reason, when it stops without a result.
+    let errors = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    if let Some(err) = stderr {
+        let errors = errors.clone();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+                let mut e = errors.lock().unwrap_or_else(|e| e.into_inner());
+                if e.len() < 4000 {
+                    e.push_str(&line);
+                    e.push('\n');
+                }
+            }
+        });
+    }
+    let waiter = child.clone();
+    let ctx = ctx.clone();
+    std::thread::spawn(move || {
+        let mut finished = false;
+        if let Some(out) = stdout {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                for ev in claude_events(&line) {
+                    if matches!(ev, ClaudeEv::Done(_)) {
+                        finished = true;
+                    }
+                    let _ = tx.send(ev);
+                }
+                ctx.request_repaint();
+            }
+        }
+        let status = waiter.lock().unwrap_or_else(|e| e.into_inner()).take().and_then(|mut c| c.wait().ok());
+        if !finished {
+            // Give the stderr reader a moment to collect the last lines.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let e = errors.lock().unwrap_or_else(|e| e.into_inner()).trim().to_string();
+            let why = match (e.lines().last(), status) {
+                (Some(l), _) if !l.is_empty() => l.to_string(),
+                (_, Some(s)) if !s.success() => format!("Claude Code exited with {s}"),
+                _ => "Claude Code stopped without an answer".to_string(),
+            };
+            let _ = tx.send(ClaudeEv::Done(Err(why)));
+        }
+        ctx.request_repaint();
+    });
+    Ok(ClaudeRun { rx, child, token })
+}
+
+/// What Claude Code is told about where it is, appended to its own system prompt.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn claude_system(app: App, tab: u64) -> String {
+    format!(
+        "You are the assistant inside OfficeCraft, an office suite open on the user's screen, and you work in their \
+         documents live through the officecraft tools; there are no other tools. The user is looking at tab {tab}, a \
+         {noun}: \"this document\" means that tab unless they say otherwise. Call app_tools for a tab before use_tool. \
+         Read before you write, change only what was asked, keep what is already there, and save only when asked. \
+         When you are done, say what you changed in one or two plain sentences.",
+        noun = app.noun()
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Settings {
+    /// Claude Code sessions the user starts themselves: the MCP server stays on, and this is the
+    /// command that connects one.
+    fn mcp_section(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+        ui.checkbox(&mut self.draft.mcp_listen, "Also let Claude Code sessions I start myself work in OfficeCraft");
+        if !self.draft.mcp_listen {
+            return;
+        }
+        let port = crate::mcp::port().unwrap_or(crate::mcp::BASE_PORT);
+        let token = crate::mcp::saved_token().unwrap_or_default();
+        let command = |t: &str| format!("claude mcp add --transport http officecraft {} --header \"Authorization: Bearer {t}\"", crate::mcp::url(port));
+        ui.label(
+            egui::RichText::new(format!(
+                "Run this once where Claude Code runs. On another computer, connect with ssh -R {port}:127.0.0.1:{port} first, so it can reach OfficeCraft here."
+            ))
+            .size(12.0)
+            .weak(),
+        );
+        let shown = if self.reveal { command(&token) } else { command("…") };
+        ui.add(egui::Label::new(egui::RichText::new(shown).monospace().size(11.5)).wrap());
+        ui.horizontal(|ui| {
+            if ui.button("Copy command").clicked() {
+                ui.ctx().copy_text(command(&token));
+                self.saved_note = "Copied. The command holds the token: treat it like a password.".into();
+            }
+            ui.checkbox(&mut self.reveal, "Show token");
+            if ui.button("New token").on_hover_text("The old token stops working; run the new command again").clicked() {
+                self.saved_note = match crate::mcp::new_saved_token() {
+                    Ok(_) => "Made a new token: run the new command again.".into(),
+                    Err(e) => format!("Could not make a new token: {e}"),
+                };
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod claude_tests {
+    use super::*;
+
+    #[test]
+    fn commands_split_like_a_shell() {
+        assert_eq!(split_words("ssh my-nas claude"), ["ssh", "my-nas", "claude"]);
+        assert_eq!(split_words("  '/opt/my tools/claude'  --x \"a b\" ''"), ["/opt/my tools/claude", "--x", "a b", ""]);
+        assert!(split_words("   ").is_empty());
+    }
+
+    #[test]
+    fn remote_arguments_are_quoted_for_the_shell() {
+        assert_eq!(shell_quote("claude"), "claude");
+        assert_eq!(shell_quote(""), "''");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote(r#"{"a": 1}"#), r#"'{"a": 1}'"#);
+        assert_eq!(shell_quote("$(rm -rf ~)"), "'$(rm -rf ~)'");
+    }
+
+    #[test]
+    fn a_local_command_runs_claude_with_only_officecraft_tools() {
+        let (prog, args) = claude_argv("claude", 7990, "{}", "sys", "", None).unwrap();
+        assert_eq!(prog, "claude");
+        let joined = args.join(" ");
+        assert!(joined.starts_with("-p --output-format stream-json --verbose --tools  --strict-mcp-config --mcp-config {}"), "{joined}");
+        assert!(args.windows(2).any(|w| w == ["--allowedTools", "mcp__officecraft"]));
+        assert!(!args.contains(&"--model".to_string()) && !args.contains(&"--resume".to_string()));
+        let (_, args) = claude_argv("claude", 7990, "{}", "sys", "opus", Some("abc")).unwrap();
+        assert!(args.windows(2).any(|w| w == ["--model", "opus"]) && args.windows(2).any(|w| w == ["--resume", "abc"]));
+    }
+
+    #[test]
+    fn over_ssh_the_port_comes_back_and_arguments_are_quoted() {
+        let (prog, args) = claude_argv("ssh my-nas claude", 7991, r#"{"x": "y"}"#, "be good", "", None).unwrap();
+        assert_eq!(prog, "ssh");
+        assert_eq!(&args[..7], ["-T", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-R", "7991:127.0.0.1:7991"]);
+        assert_eq!(&args[7..9], ["my-nas", "claude"]);
+        assert!(args.contains(&"''".to_string()), "the empty --tools value survives the remote shell");
+        assert!(args.contains(&r#"'{"x": "y"}'"#.to_string()));
+        assert!(args.contains(&"'be good'".to_string()));
+        assert!(claude_argv("ssh my-nas", 7991, "{}", "s", "", None).is_err());
+        assert!(claude_argv("", 7991, "{}", "s", "", None).is_err());
+    }
+
+    #[test]
+    fn stream_json_lines_become_chat_events() {
+        let init = r#"{"type":"system","subtype":"init","session_id":"s1","mcp_servers":[{"name":"officecraft","status":"connected"}]}"#;
+        assert!(matches!(claude_events(init).as_slice(), [ClaudeEv::Session(s)] if s == "s1"));
+        let failed = r#"{"type":"system","subtype":"init","session_id":"s1","mcp_servers":[{"name":"officecraft","status":"failed"}]}"#;
+        assert!(matches!(claude_events(failed).last(), Some(ClaudeEv::Done(Err(e))) if e.contains("failed")));
+        let turn = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"On it."},{"type":"tool_use","id":"t1","name":"mcp__officecraft__use_tool","input":{"tab":1,"tool":"insert_blocks","arguments":{"blocks":[{"text":"a"},{"text":"b"}]}}}]}}"#;
+        match claude_events(turn).as_slice() {
+            [ClaudeEv::Text(t), ClaudeEv::Tool { id, label, edit }] => {
+                assert_eq!(t, "On it.");
+                assert_eq!(id, "t1");
+                assert_eq!(label, "Wrote 2 paragraphs");
+                assert!(*edit);
+            }
+            _ => panic!("text and a tool call"),
+        }
+        let result = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true}]}}"#;
+        assert!(matches!(claude_events(result).as_slice(), [ClaudeEv::ToolDone { id, ok: false }] if id == "t1"));
+        let done = r#"{"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"s1"}"#;
+        assert!(matches!(claude_events(done).last(), Some(ClaudeEv::Done(Ok(())))));
+        let err = r#"{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"s1"}"#;
+        assert!(matches!(claude_events(err).last(), Some(ClaudeEv::Done(Err(e))) if e == "error_max_turns"));
+        assert!(claude_events("not json").is_empty());
+    }
+
+    #[test]
+    fn reading_tools_are_not_edits() {
+        assert_eq!(describe_claude("mcp__officecraft__list_tabs", &json!({})), ("Looked at the open tabs".to_string(), false));
+        let (l, edit) = describe_claude("mcp__officecraft__use_tool", &json!({"tool": "read_range", "arguments": {"range": "A1:B2"}}));
+        assert_eq!(l, "Read A1:B2");
+        assert!(!edit);
+        assert!(describe_claude("mcp__officecraft__save", &json!({})).1);
+    }
 }
 
 #[cfg(test)]

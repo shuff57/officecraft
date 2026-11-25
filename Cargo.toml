@@ -51,6 +51,8 @@ trash = "5"
 dunce = "1"
 # The formatted (HTML) clipboard the apps share; data-control so KDE/wlroots Wayland gets it natively.
 arboard = { version = "3.6", features = ["wayland-data-control"] }
+# Bearer tokens for the MCP server Claude Code connects to.
+getrandom = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
