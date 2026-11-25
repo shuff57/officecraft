@@ -86,6 +86,23 @@ The **Assistant** button opens a chat that edits the open file through that app'
   menu fills in DeepSeek, Groq, Together AI, Mistral, Fireworks, Cerebras, Ollama or LM Studio.
 - **Ollama Cloud**: `https://ollama.com/v1`, default model `gpt-oss:120b`.
 - **OpenRouter**: `https://openrouter.ai/api/v1`, default model `openai/gpt-oss-120b`.
+- **Claude Code** (desktop): your own Claude Code and Claude plan. Each message runs `claude -p`,
+  which edits the open documents live, step by step, through OfficeCraft's MCP server. Claude Code
+  gets no shell and no file tools, only OfficeCraft's. For Claude Code on another computer (a NAS),
+  set the command to the ssh command that reaches it, e.g. `ssh my-nas claude` (use the full path
+  to `claude` if a non-interactive shell there doesn't find it). OfficeCraft adds
+  `-R 7990:127.0.0.1:7990` so the far end can reach it, and nothing listens on the network.
+
+The MCP server listens on `http://127.0.0.1:7990/mcp` (the next free port if that one is taken),
+loopback only, and needs a bearer token. Each Claude Code run gets its own token. To use OfficeCraft
+from a Claude Code session you start yourself, tick "Also let Claude Code sessions I start myself
+work in OfficeCraft" in Settings and run the `claude mcp add …` command shown there. Its token is
+kept in `~/.config/officecraft/mcp-token` (mode 0600); New token replaces it. The tools are
+`list_tabs`, `app_tools`, `use_tool` (each app's own agent tools), `new_tab`, `open_file`,
+`show_tab`, `send_to` and `save`.
+
+On Home, **Make** turns a description into a new document: it picks the app from the words (or the
+one you choose) and hands the description to that tab's assistant.
 
 Settings are stored in `~/.config/officecraft/ai.json`. API keys go in a separate owner-only file,
 `~/.config/officecraft/ai-keys.json` (mode 0600). `OFFICECRAFT_AI_URL`, `OFFICECRAFT_AI_MODEL`
@@ -102,6 +119,16 @@ Slides tab.
 
 Copy and paste between Docs, Sheets and Slides keeps formatting: a Sheets range pastes into Docs as
 a table.
+
+**Send to** (right-click a tab, or the Send to menu at the top) makes one app's document into
+another's, in a new tab or an open one:
+- Docs → Slides takes the outline: the top heading level becomes the slides, with the text under
+  each heading as bullets.
+- Slides → Docs turns slide titles into headings, text into bullets and speaker notes into body
+  text.
+- Sheets → Docs or Slides brings the used range over as a table.
+- Graph → Docs or Slides inserts the graph as a picture. In Docs it can still be edited.
+- Docs, Sheets or Slides → PDF saves a PDF and opens it in a PDF tab.
 
 Closing the window or restarting after an update asks first when a tab has unsaved work. Docs and
 Slides keep recovery copies of unsaved documents in `~/.local/share/officecraft/recovery`; after a
