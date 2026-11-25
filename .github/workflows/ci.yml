@@ -67,7 +67,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: check
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A cold release build of the browser bundle (no cache yet) takes over 30 min on a hosted
+    # runner; later runs start from the cache and are much quicker.
+    timeout-minutes: 90
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -98,6 +100,9 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         if: steps.creds.outputs.ok == '1'
+        with:
+          # Keep what was built even if the deploy step fails, so the next try starts warm.
+          cache-on-failure: true
       # prebuilt, checksum-verified binary instead of compiling trunk on every deploy (several minutes)
       - name: Install trunk
         if: steps.creds.outputs.ok == '1'
