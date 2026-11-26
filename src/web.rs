@@ -171,7 +171,7 @@ fn query() -> String {
 fn guard_unload() -> Result<(), String> {
     let window = web_sys::window().ok_or("no window")?;
     let on_unload = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(move |e: web_sys::BeforeUnloadEvent| {
-        if DIRTY.with(|d| d.get()) {
+        if DIRTY.with(|d| d.get()) || LOST_SAVE.with(|l| l.get()) {
             e.prevent_default();
             // Older browsers ask only when `returnValue` is set.
             e.set_return_value("unsaved changes");
@@ -764,6 +764,20 @@ fn save_file(path: &str, bytes: &[u8]) -> Result<(), String> {
     }
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let Some(handle) = HANDLES.with(|m| m.borrow().get(&name).cloned().flatten()) else {
+        // A new document, with folders added: ask where in them it goes (the browser's Save
+        // dialog opens in the selected folder). Without folders it is a download, as before.
+        if can_write_in_place() && DIRS.with(|m| !m.borrow().is_empty()) {
+            let tab = CURRENT_TAB.with(|t| t.get());
+            // This tab already saved a file of this type: the app proposes a new name each time
+            // (its first line, say), but Save means that same file.
+            let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+            let bound = tab.and_then(|t| TAB_FILES.with(|m| m.borrow().get(&(t, ext.clone())).cloned()));
+            match bound {
+                Some(handle) => write_bound(name, handle, bytes.to_vec(), (tab.unwrap_or_default(), ext)),
+                None => save_into_folder(name, bytes.to_vec(), tab.map(|t| (t, ext))),
+            }
+            return Ok(());
+        }
         return download(path, bytes);
     };
     let (path, bytes) = (path.to_string(), bytes.to_vec());
@@ -779,6 +793,164 @@ fn save_file(path: &str, bytes: &[u8]) -> Result<(), String> {
         }
     });
     Ok(())
+}
+
+thread_local! {
+    /// The sidebar folder a new document's Save dialog opens in (set by the shell each frame).
+    static SAVE_FOLDER: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Folders a save just wrote into, for the shell to list again.
+    static RESCANS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// A Save that wrote nothing (dialog closed, write refused): the app already counts the
+    /// document as saved, so the page keeps its leave-warning up until a Save succeeds.
+    static LOST_SAVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+thread_local! {
+    /// The tab being drawn right now, if the shell says (a Save during its frame belongs to it).
+    static CURRENT_TAB: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// The file a tab's first Save created, by (tab, extension).
+    static TAB_FILES: RefCell<std::collections::HashMap<(u64, String), wasm_bindgen::JsValue>> = RefCell::new(std::collections::HashMap::new());
+}
+
+pub fn set_current_tab(id: Option<u64>) {
+    CURRENT_TAB.with(|t| t.set(id));
+}
+
+/// Later Saves of a tab that already created its file: write that file again.
+fn write_bound(name: String, handle: Js, bytes: Vec<u8>, key: (u64, String)) {
+    wasm_bindgen_futures::spawn_local(async move {
+        match write_handle(&handle, &bytes).await {
+            Ok(()) => {
+                LOST_SAVE.with(|l| l.set(false));
+                note(format!("{} saved", prop_string(&handle, "name")), false);
+            }
+            Err(e) => {
+                // The file is gone or refused the write: the next Save asks where again.
+                TAB_FILES.with(|m| m.borrow_mut().remove(&key));
+                LOST_SAVE.with(|l| l.set(true));
+                note(format!("{name} was not saved: {e}. Save again to choose where."), true);
+            }
+        }
+    });
+}
+
+/// The folder (sidebar key) a new document's Save dialog should open in.
+pub fn set_save_folder(key: Option<&str>) {
+    SAVE_FOLDER.with(|s| {
+        if s.borrow().as_deref() != key {
+            *s.borrow_mut() = key.map(str::to_string);
+        }
+    });
+}
+
+/// Folders written into since the last call.
+pub fn take_rescans() -> Vec<String> {
+    RESCANS.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// The Save dialog's file-type filter for `name`, or none for an unknown extension.
+fn save_types(name: &str) -> Result<Option<Js>, String> {
+    let Some((_, ext)) = name.rsplit_once('.') else { return Ok(None) };
+    if mime_for(name) == "application/octet-stream" {
+        return Ok(None);
+    }
+    let accept = js_sys::Object::new();
+    set_prop(&accept, mime_for(name), &js_sys::Array::of1(&Js::from_str(&format!(".{}", ext.to_ascii_lowercase()))))?;
+    let kind = js_sys::Object::new();
+    set_prop(&kind, "description", &Js::from_str(&format!("{} file", ext.to_ascii_uppercase())))?;
+    set_prop(&kind, "accept", &accept)?;
+    Ok(Some(js_sys::Array::of1(&kind).into()))
+}
+
+/// The handle to write a new document to. Normally the browser's Save dialog, opened in the
+/// selected folder. Test hook (`?test-folder=opfs`): the "OPFS" folder itself, no dialog, under a
+/// name no file there has.
+async fn new_file_handle(name: &str) -> Result<Option<Js>, String> {
+    let selected = SAVE_FOLDER.with(|s| s.borrow().clone());
+    let start = selected.as_ref().and_then(|k| DIRS.with(|m| m.borrow().get(k).cloned()));
+    if query().contains("test-folder=opfs")
+        && let (Some("OPFS"), Some(root)) = (selected.as_deref(), start.as_ref())
+    {
+        let create = js_sys::Object::new();
+        set_prop(&create, "create", &Js::TRUE)?;
+        let (stem, ext) = match name.rsplit_once('.') {
+            Some((s, e)) => (s.to_string(), format!(".{e}")),
+            None => (name.to_string(), String::new()),
+        };
+        let mut candidate = name.to_string();
+        for n in 2.. {
+            if await_js(call(root, "getFileHandle", &[Js::from_str(&candidate)])?).await.is_err() {
+                break;
+            }
+            candidate = format!("{stem} ({n}){ext}");
+        }
+        return Ok(Some(await_js(call(root, "getFileHandle", &[Js::from_str(&candidate), create.into()])?).await?));
+    }
+    let window = web_sys::window().ok_or("no window")?;
+    let opts = js_sys::Object::new();
+    set_prop(&opts, "suggestedName", &Js::from_str(name))?;
+    if let Some(types) = save_types(name)? {
+        set_prop(&opts, "types", &types)?;
+    }
+    if let Some(dir) = start {
+        set_prop(&opts, "startIn", &dir)?;
+    }
+    match await_js(call(&window, "showSaveFilePicker", &[opts.into()])?).await {
+        Ok(h) => Ok(Some(h)),
+        Err(e) if e.contains("AbortError") => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// The added folder `handle`'s file sits in, if it is in one.
+async fn folder_holding(handle: &Js) -> Option<String> {
+    let dirs: Vec<(String, Js)> = DIRS.with(|m| m.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+    for (key, dir) in dirs {
+        let Ok(p) = call(&dir, "resolve", &[handle.clone()]) else { continue };
+        if await_js(p).await.is_ok_and(|v| v.is_object()) {
+            return Some(key);
+        }
+    }
+    None
+}
+
+/// First Save of a new document with folders added: pick where (the folder's own dialog), write
+/// it, and keep the handle so every later Save writes in place.
+fn save_into_folder(name: String, bytes: Vec<u8>, tab: Option<(u64, String)>) {
+    wasm_bindgen_futures::spawn_local(async move {
+        let result: Result<Option<(Js, String)>, String> = async {
+            let Some(handle) = new_file_handle(&name).await? else { return Ok(None) };
+            write_handle(&handle, &bytes).await?;
+            let saved_as = prop_string(&handle, "name");
+            Ok(Some((handle, saved_as)))
+        }
+        .await;
+        match result {
+            Ok(Some((handle, saved_as))) => {
+                let folder = folder_holding(&handle).await;
+                if let Some(key) = tab {
+                    TAB_FILES.with(|m| m.borrow_mut().insert(key, handle.clone()));
+                }
+                remember_handle(name, handle).await;
+                LOST_SAVE.with(|l| l.set(false));
+                match folder {
+                    Some(key) => {
+                        note(format!("{saved_as} saved in {key}"), false);
+                        RESCANS.with(|r| r.borrow_mut().push(key));
+                    }
+                    None => note(format!("{saved_as} saved"), false),
+                }
+            }
+            Ok(None) => {
+                LOST_SAVE.with(|l| l.set(true));
+                note(format!("{name} was not saved: the Save dialog was closed. Save again to choose where."), true);
+            }
+            Err(e) => {
+                LOST_SAVE.with(|l| l.set(true));
+                note(format!("{name} was not saved: {e}"), true);
+            }
+        }
+    });
 }
 
 async fn write_handle(handle: &Js, bytes: &[u8]) -> Result<(), String> {

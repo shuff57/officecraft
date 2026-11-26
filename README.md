@@ -133,6 +133,12 @@ another's, in a new tab or an open one:
 In the web build, a file in a folder added with the folder picker can be renamed or deleted from its
 right-click menu. Delete is permanent, because a browser has no Trash.
 
+With a folder added, the first Save of a new document opens the browser's Save dialog in the folder
+shown on Home, and the file appears in that folder. Later Saves of that tab write the same file in
+place, even if the app would propose another name. If the dialog is closed, a message says the
+document was not saved and the page still warns before you leave. Without an added folder, Save
+downloads a copy as before.
+
 Closing the window or restarting after an update asks first when a tab has unsaved work. Docs and
 Slides keep recovery copies of unsaved documents in `~/.local/share/officecraft/recovery`; after a
 crash they come back on the next launch (`OFFICECRAFT_NO_RECOVERY=1` turns this off).
@@ -155,7 +161,8 @@ Debug switches:
   transcript.
 
 In the web build, `?test-folder=opfs` adds the page's private storage as a folder named "OPFS"
-holding two sample files. Rename and Delete can then be tried without the folder picker.
+holding two sample files. Rename, Delete and the first Save of a new document can then be tried
+without a picker (the Save dialog is skipped there; the file is written to the folder directly).
 
 ## Licence
 

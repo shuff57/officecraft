@@ -303,6 +303,15 @@ fn web_can_browse() -> bool {
     false
 }
 
+/// Browser: the tab being drawn, so a first Save can be bound to it (later Saves write the
+/// same file in place even when the app proposes another name).
+#[cfg(target_arch = "wasm32")]
+fn web_current_tab(id: Option<u64>) {
+    web::set_current_tab(id);
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn web_current_tab(_id: Option<u64>) {}
+
 fn kind_for(path: &str) -> Option<Kind> {
     // verSHion claims compound suffixes before the final-extension match (and never claims
     // generic .json/.zip/.csv, which other tabs own).
@@ -2014,7 +2023,9 @@ impl Suite {
                 }
                 let before = ctx.global_style();
                 with_events_withheld(&ctx, !focused, || {
+                    web_current_tab(Some(tid));
                     child.push_id(("tile", tid), |ui| e.tab.ui(ui, frame));
+                    web_current_tab(None);
                 });
                 let after = ctx.global_style();
                 if !std::sync::Arc::ptr_eq(&before, &after) {
@@ -2826,14 +2837,6 @@ impl Suite {
     /// `web::take_notes`.
     #[cfg(target_arch = "wasm32")]
     fn web_file_op_ui(&mut self, ctx: &egui::Context) {
-        for (text, error) in web::take_notes() {
-            if error {
-                self.notice = Some(text);
-            } else {
-                self.notice = None;
-                self.status = Some(text);
-            }
-        }
         let Some(op) = &mut self.file_op else { return };
         let (mut done, mut go) = (false, false);
         let title = if matches!(op, FileOp::Rename { .. }) { "Rename" } else { "Delete for good?" };
@@ -4592,6 +4595,16 @@ impl eframe::App for Suite {
         {
             let dirty = self.entries.iter().any(|e| e.tab.is_dirty());
             web::set_dirty(dirty);
+            // What finished renames, deletes and saves say shows on whichever view is up, and a
+            // folder a save wrote into is listed again.
+            let now = ctx.input(|i| i.time);
+            for (text, error) in web::take_notes() {
+                self.toast = Some((text, error, now));
+            }
+            web::set_save_folder(self.folder_sel.and_then(|i| self.folders.get(i)).map(String::as_str));
+            for key in web::take_rescans() {
+                web::rescan_folder(&key, self.folder_scans.clone());
+            }
             if host::active() {
                 host::report_dirty(dirty);
                 for (name, bytes) in host::take_arrived() {
@@ -5255,7 +5268,9 @@ impl eframe::App for Suite {
                     // installed yet (`logic` does that at the start of the next frame): drawing it
                     // now would use another app's font families, which panics.
                     if owner == Some(e.kind) && !settling {
+                        web_current_tab(Some(id));
                         e.tab.ui(ui, frame);
+                        web_current_tab(None);
                         // viSHual's own chat box asks the suite's assistant: one AI key for all.
                         if let Tab::Graph(g) = &mut e.tab {
                             for r in g.take_requests() {
