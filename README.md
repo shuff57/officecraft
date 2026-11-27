@@ -126,7 +126,13 @@ another's, in a new tab or an open one:
   each heading as bullets.
 - Slides → Docs turns slide titles into headings, text into bullets and speaker notes into body
   text.
-- Sheets → Docs or Slides brings the used range over as a table.
+- Sheets → Docs or Slides brings the used range over as a table. The "linked table" entries make a
+  live link: the table is checked twice a second and replaced when the sheet's shown values change
+  (not while that Docs or Slides tab is the one in front, where you might be typing in it). The link
+  is kept in the table's alt text, so it is saved in the .docx or .pptx and works again once the
+  source sheet is open; a sheet is found by its saved path, so save it first to keep a link across
+  restarts. A refresh rebuilds the table, so formatting added to it afterwards is not kept, and a
+  range too big for a table (or for a slide's) is left as it was with a message.
 - Graph → Docs or Slides inserts the graph as a picture. In Docs it can still be edited.
 - Docs, Sheets or Slides → PDF saves a PDF and opens it in a PDF tab.
 

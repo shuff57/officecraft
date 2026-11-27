@@ -16,6 +16,7 @@ mod ai;
 mod convert;
 mod equation;
 mod graphpic;
+mod links;
 mod platform;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
@@ -700,6 +701,30 @@ enum SendTo {
     Into(u64),
     /// A PDF the user names, opened in a PDF tab.
     Pdf,
+    /// Like `New`, for a sheet's table that then follows the sheet (a live link).
+    NewLinked(Kind),
+    /// Like `Into`, with a live link.
+    IntoLinked(u64),
+}
+
+impl SendTo {
+    /// This destination, with a live link.
+    fn link(self) -> SendTo {
+        match self {
+            SendTo::New(k) => SendTo::NewLinked(k),
+            SendTo::Into(id) => SendTo::IntoLinked(id),
+            other => other,
+        }
+    }
+
+    /// The plain destination and whether the table is to be linked.
+    fn split(self) -> (SendTo, bool) {
+        match self {
+            SendTo::NewLinked(k) => (SendTo::New(k), true),
+            SendTo::IntoLinked(id) => (SendTo::Into(id), true),
+            other => (other, false),
+        }
+    }
 }
 
 struct Entry {
@@ -1383,6 +1408,9 @@ struct Suite {
     /// A short message over any view (Send to… results): text, whether it is an error, and when
     /// it was shown (egui time).
     toast: Option<(String, bool, f64)>,
+    /// Live links: when the linked tables were last checked, and the refreshes that failed.
+    links_polled: f64,
+    links_failed: std::collections::HashSet<(u64, String, String, u64)>,
     /// New from prompt on Home: the description being typed, and the app chosen for it (`None`:
     /// worked out from the words, `kind_for_prompt`).
     make_prompt: String,
@@ -1489,7 +1517,7 @@ impl Suite {
             Some(_) if recent.is_empty() => (Some(0), Vec::new()),
             _ => (None, Vec::new()),
         };
-        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, listing_seq: std::collections::HashMap::new(), listing_state: Listing::Ready, file_op_focused: false, #[cfg(not(target_arch = "wasm32"))] purge_confirm: None, leaving: false, #[cfg(not(target_arch = "wasm32"))] word_probe: None, tab_in_view: None, tabs_overflow: false, status: None, toast: None, make_prompt: String::new(), make_kind: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
+        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, listing_seq: std::collections::HashMap::new(), listing_state: Listing::Ready, file_op_focused: false, #[cfg(not(target_arch = "wasm32"))] purge_confirm: None, leaving: false, #[cfg(not(target_arch = "wasm32"))] word_probe: None, tab_in_view: None, tabs_overflow: false, status: None, toast: None, links_polled: 0.0, links_failed: std::collections::HashSet::new(), make_prompt: String::new(), make_kind: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite
     }
 
@@ -2353,6 +2381,42 @@ impl Suite {
         let has_table = slide.get("shapes").and_then(serde_json::Value::as_array).is_some_and(|a| a.iter().any(|s| s.get("table").is_some()));
         eprintln!("sendto-selftest: sheets → slides slide 0: {}", slide.to_string().chars().take(600).collect::<String>());
         check(r.is_ok() && has_table && slide_titles(self, gdeck).len() == 1, format!("sheets → new slides as one table slide: {r:?}"));
+        // Live links: a linked table follows the sheet, in Docs and in Slides.
+        let r = self.convert_tab(ctx, grid, SendTo::NewLinked(Kind::Word));
+        let ldoc = self.entries.last().map(|e| e.id).unwrap_or(0);
+        let linked_in_doc = match self.entry_mut(ldoc).map(|e| &mut e.tab) {
+            Some(Tab::Word(a)) => links::word_links(&a.session).len(),
+            _ => 0,
+        };
+        check(r.is_ok() && linked_in_doc == 1, format!("sheets → new docs, linked: {r:?}, {linked_in_doc} linked table(s)"));
+        let r = self.convert_tab(ctx, grid, SendTo::NewLinked(Kind::Deck));
+        let ldeck = self.entries.last().map(|e| e.id).unwrap_or(0);
+        let linked_in_deck = match self.entry_mut(ldeck).map(|e| &mut e.tab) {
+            Some(Tab::Deck(a)) => links::deck_links(&a.session).len(),
+            _ => 0,
+        };
+        check(r.is_ok() && linked_in_deck == 1, format!("sheets → new slides, linked: {r:?}, {linked_in_deck} linked table(s)"));
+        self.view = View::Home;
+        self.links_polled = f64::NEG_INFINITY;
+        self.refresh_links(ctx);
+        check(self.toast.is_none(), format!("nothing is refreshed while the sheet is unchanged: {:?}", self.toast));
+        let r = self.tab_run(ctx, grid, "edit.paste", serde_json::json!({ "at": "B2", "text": "9999" }));
+        check(r.is_ok(), format!("changing the sheet: {r:?}"));
+        self.links_polled = f64::NEG_INFINITY;
+        self.refresh_links(ctx);
+        let in_doc = self.tab_call(ctx, ldoc, "document.inspect", serde_json::json!({ "text": true })).map(|v| v.to_string().contains("9999")).unwrap_or(false);
+        let in_deck = self.tab_run(ctx, ldeck, "slide.inspect", serde_json::json!({ "index": 0 })).map(|v| v.to_string().contains("9999")).unwrap_or(false);
+        check(in_doc, "the linked table in Docs shows the new value".into());
+        check(in_deck, "the linked table in Slides shows the new value".into());
+        let still = match (self.entry_mut(ldoc).map(|e| &mut e.tab), ()) {
+            (Some(Tab::Word(a)), ()) => links::word_links(&a.session).len(),
+            _ => 0,
+        };
+        check(still == 1, format!("the Docs table is still linked, once: {still}"));
+        self.toast = None;
+        self.links_polled = f64::NEG_INFINITY;
+        self.refresh_links(ctx);
+        check(self.toast.is_none(), format!("no second refresh for the same values: {:?}", self.toast));
         // An empty sheet opens nothing.
         let empty = self.push_tab(Kind::Grid, Tab::create(Kind::Grid));
         let n_before = self.entries.len();
@@ -3211,6 +3275,7 @@ impl Suite {
                 {
                     return Now(Err(format!("tab {id} is not an open {} tab", kind.label())));
                 }
+                let dest = if args.get("linked").and_then(serde_json::Value::as_bool).unwrap_or(false) { dest.link() } else { dest };
                 let r = self.convert_tab(ctx, from, dest);
                 let front = match self.view {
                     View::Tab(id) => Some(id),
@@ -3281,6 +3346,11 @@ impl Suite {
                 out.extend(into(Kind::Word, "insert the table"));
                 out.push(("New Slides with the table".into(), SendTo::New(Kind::Deck)));
                 out.extend(into(Kind::Deck, "add a slide with the table"));
+                // The same, kept up to date with the sheet.
+                out.push(("New Docs with a linked table".into(), SendTo::NewLinked(Kind::Word)));
+                out.extend(into(Kind::Word, "insert a linked table").into_iter().map(|(l, t)| (l, t.link())));
+                out.push(("New Slides with a linked table".into(), SendTo::NewLinked(Kind::Deck)));
+                out.extend(into(Kind::Deck, "add a slide with a linked table").into_iter().map(|(l, t)| (l, t.link())));
             }
             Kind::Deck => {
                 out.push(("New Docs from the slides".into(), SendTo::New(Kind::Word)));
@@ -3425,7 +3495,7 @@ impl Suite {
                 }
                 Ok((id, true))
             }
-            SendTo::Pdf => Err("not a tab".into()),
+            SendTo::Pdf | SendTo::NewLinked(_) | SendTo::IntoLinked(_) => Err("not a tab".into()),
         }
     }
 
@@ -3444,6 +3514,7 @@ impl Suite {
 
     /// The conversion itself. `Ok(None)`: the user cancelled (the PDF file dialog).
     fn convert_tab(&mut self, ctx: &egui::Context, from: u64, to: SendTo) -> Result<Option<String>, String> {
+        let (to, linked) = to.split();
         let (kind, name) = self.entries.iter().find(|e| e.id == from).map(|e| (e.kind, e.name.clone())).ok_or_else(|| "that tab was closed".to_string())?;
         if to == SendTo::Pdf {
             #[cfg(not(target_arch = "wasm32"))]
@@ -3463,8 +3534,11 @@ impl Suite {
         let target_kind = match to {
             SendTo::New(k) => k,
             SendTo::Into(id) => self.entries.iter().find(|e| e.id == id).map(|e| e.kind).ok_or_else(|| "that tab was closed".to_string())?,
-            SendTo::Pdf => unreachable!(),
+            SendTo::Pdf | SendTo::NewLinked(_) | SendTo::IntoLinked(_) => unreachable!(),
         };
+        if linked && kind != Kind::Grid {
+            return Err("only a sheet's table can be linked".into());
+        }
         // Read everything first, so a document that cannot be converted opens no tab.
         let made = match (kind, target_kind) {
             (Kind::Word, Kind::Deck) => {
@@ -3512,14 +3586,33 @@ impl Suite {
             }
             (Kind::Grid, Kind::Word) => {
                 let (text, html, range) = self.sheet_table(ctx, from)?;
+                let tag = if linked {
+                    if html.is_none() {
+                        return Err(format!("{range} is too big to keep as a linked table"));
+                    }
+                    Some(self.link_tag(ctx, from, None, &range)?)
+                } else {
+                    None
+                };
                 let (dest, fresh) = self.send_target(to, Kind::Word, &convert::stem(&name))?;
                 let mut paste = serde_json::json!({ "text": text });
                 if let Some(h) = &html {
                     paste["html"] = serde_json::json!(h);
                 }
-                let r = self.tab_run(ctx, dest, "edit.paste", paste);
+                let before = match self.entry_mut(dest).map(|e| &mut e.tab) {
+                    Some(Tab::Word(a)) => links::word_table_ids(&a.session),
+                    _ => Vec::new(),
+                };
+                let mut r = self.tab_run(ctx, dest, "edit.paste", paste).map(|_| ());
+                if let (Ok(()), Some(tag)) = (&r, &tag) {
+                    r = match self.entry_mut(dest).map(|e| &mut e.tab) {
+                        Some(Tab::Word(a)) => links::word_mark_new(&mut a.session, &before, tag),
+                        _ => Err("that tab was closed".into()),
+                    };
+                }
                 let how = if html.is_some() { "" } else { " (as text: the range is too big for a table)" };
-                (dest, fresh, r.map(|_| format!("Sent {range} from {name}{how}.")))
+                let kept = if tag.is_some() { self.link_note(from) } else { "" };
+                (dest, fresh, r.map(|_| format!("Sent {range} from {name}{how}.{kept}")))
             }
             (Kind::Grid, Kind::Deck) => {
                 // DeckCraft pastes HTML as text, so the table is made from the shown values.
@@ -3535,9 +3628,23 @@ impl Suite {
                     .and_then(|v| v.get("slideSize").and_then(serde_json::Value::as_array).and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?))))
                     .unwrap_or(probe);
                 let r = convert::slide_table(&read, size).and_then(|(params, cut)| {
-                    self.new_slide_for(ctx, dest, fresh, "titleOnly", &convert::stem(&name), |s| s.tab_run(ctx, dest, "insert.table", params).map(|_| ()))?;
+                    // A linked table is the whole range: one that was cut to fit would never match
+                    // the sheet.
+                    if linked && cut {
+                        let (mr, mc) = convert::SLIDE_TABLE_MAX;
+                        return Err(format!("{range} is bigger than {mr} rows by {mc} columns, which is as much as a slide's table holds"));
+                    }
+                    let tag = if linked { Some(self.link_tag(ctx, from, read.get("sheet").and_then(serde_json::Value::as_str), &range)?) } else { None };
+                    self.new_slide_for(ctx, dest, fresh, "titleOnly", &convert::stem(&name), |s| {
+                        let made = s.tab_run(ctx, dest, "insert.table", params)?;
+                        match (&tag, made.get("id").and_then(serde_json::Value::as_u64)) {
+                            (Some(tag), Some(id)) => links::deck_tag_via(|c, p| s.tab_run(ctx, dest, c, p), id, tag),
+                            _ => Ok(()),
+                        }
+                    })?;
                     let (mr, mc) = convert::SLIDE_TABLE_MAX;
-                    Ok(if cut { format!("Sent {range} from {name}: the first {mr} rows and {mc} columns fit on the slide.") } else { format!("Sent {range} from {name}.") })
+                    let kept = if tag.is_some() { self.link_note(from) } else { "" };
+                    Ok(if cut { format!("Sent {range} from {name}: the first {mr} rows and {mc} columns fit on the slide.") } else { format!("Sent {range} from {name}.{kept}") })
                 });
                 (dest, fresh, r)
             }
@@ -3576,23 +3683,147 @@ impl Suite {
     }
 
     /// A Sheets tab's used range on its active sheet, as (tab-separated text, HTML table when
-    /// small enough, the range's address). GridCraft's own copy makes the HTML; what the user
-    /// had copied inside GridCraft is put back afterwards.
+    /// small enough, the range's address).
     fn sheet_table(&mut self, ctx: &egui::Context, id: u64) -> Result<(String, Option<String>, String), String> {
         let read = self.tab_call(ctx, id, "sheet.read", serde_json::json!({}))?;
         let range = read.get("range").and_then(serde_json::Value::as_str).filter(|r| !r.is_empty()).ok_or_else(|| "the sheet is empty".to_string())?.to_string();
+        let (text, html) = self.sheet_copy(ctx, id, None, &range)?;
+        Ok((text, html, range))
+    }
+
+    /// `range` of a Sheets tab (on `sheet`, or its active one) as (tab-separated text, HTML table
+    /// when small enough). GridCraft's own copy makes the HTML; what the user had copied inside
+    /// GridCraft is put back afterwards.
+    fn sheet_copy(&mut self, ctx: &egui::Context, id: u64, sheet: Option<&str>, range: &str) -> Result<(String, Option<String>), String> {
         let saved = match self.entry_mut(id).map(|e| &mut e.tab) {
             Some(Tab::Grid(a)) => a.session.clipboard.take(),
             _ => None,
         };
-        let copy = self.tab_run(ctx, id, "edit.copy", serde_json::json!({ "range": range, "html": true }));
+        let mut params = serde_json::json!({ "range": range, "html": true });
+        if let Some(sh) = sheet {
+            params["sheet"] = serde_json::json!(sh);
+        }
+        let copy = self.tab_run(ctx, id, "edit.copy", params);
         if let Some(Tab::Grid(a)) = self.entry_mut(id).map(|e| &mut e.tab) {
             a.session.clipboard = saved;
         }
         let copy = copy?;
         let text = copy.get("text").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
         let html = copy.get("html").and_then(serde_json::Value::as_str).filter(|h| !h.is_empty()).map(str::to_string);
-        Ok((text, html, range))
+        Ok((text, html))
+    }
+
+    /// What a live link to a sheet is told: the saved file's path, or the open tab's name.
+    fn link_source(&self, id: u64) -> Option<String> {
+        self.entries.iter().find(|e| e.id == id).map(|e| e.path.clone().unwrap_or_else(|| e.name.clone()))
+    }
+
+    /// The tag for a table made now from `range` of Sheets tab `id`: where from, and a hash of the
+    /// values shown.
+    fn link_tag(&mut self, ctx: &egui::Context, id: u64, sheet: Option<&str>, range: &str) -> Result<links::Tag, String> {
+        let mut params = serde_json::json!({ "range": range, "formatted": true });
+        if let Some(sh) = sheet {
+            params["sheet"] = serde_json::json!(sh);
+        }
+        let read = self.tab_call(ctx, id, "sheet.read", params)?;
+        Ok(links::Tag {
+            source: self.link_source(id).ok_or_else(|| "that tab was closed".to_string())?,
+            sheet: read.get("sheet").and_then(serde_json::Value::as_str).unwrap_or("").to_string(),
+            range: range.to_string(),
+            hash: links::hash_values(&read),
+        })
+    }
+
+    /// A sentence for the toast after a link is made from Sheets tab `id`.
+    fn link_note(&self, id: u64) -> &'static str {
+        if self.entries.iter().any(|e| e.id == id && e.path.is_none()) {
+            " It follows the sheet while the sheet is open; save the sheet to keep the link after a restart."
+        } else {
+            " It follows the sheet."
+        }
+    }
+
+    /// Live links: each linked table in an open Docs or Slides tab is checked against its sheet
+    /// (an open Sheets tab, found by the path or name the link carries) and replaced when the
+    /// sheet's shown values no longer match. A table that cannot be refreshed is left as it is
+    /// and not tried again until the sheet changes once more.
+    fn refresh_links(&mut self, ctx: &egui::Context) {
+        enum Found {
+            Word { block: usize },
+            Deck(links::DeckLink),
+        }
+        let now = ctx.input(|i| i.time);
+        if now - self.links_polled < 0.5 {
+            return;
+        }
+        self.links_polled = now;
+        let mut found: Vec<(u64, links::Tag, Found)> = Vec::new();
+        if self.entries.iter().any(|e| e.kind == Kind::Grid) {
+            for e in &self.entries {
+                match &e.tab {
+                    Tab::Word(a) => found.extend(links::word_links(&a.session).into_iter().map(|(block, tag)| (e.id, tag, Found::Word { block }))),
+                    Tab::Deck(a) => found.extend(links::deck_links(&a.session).into_iter().map(|l| (e.id, l.tag.clone(), Found::Deck(l)))),
+                    _ => {}
+                }
+            }
+        }
+        // Linked tables to watch: keep the frames coming while there are some.
+        if !found.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(600));
+        }
+        let mut reads: std::collections::HashMap<(u64, String, String), Option<serde_json::Value>> = std::collections::HashMap::new();
+        for (target, tag, what) in found {
+            let Some(source) = self.entries.iter().find(|e| e.kind == Kind::Grid && (e.path.as_deref() == Some(tag.source.as_str()) || (e.path.is_none() && e.name == tag.source))).map(|e| e.id) else { continue };
+            let key = (source, tag.sheet.clone(), tag.range.clone());
+            if !reads.contains_key(&key) {
+                let read = self.tab_call(ctx, source, "sheet.read", serde_json::json!({ "sheet": tag.sheet, "range": tag.range, "formatted": true })).ok();
+                reads.insert(key.clone(), read);
+            }
+            let Some(Some(read)) = reads.get(&key) else { continue };
+            let hash = links::hash_values(read);
+            // The sheet's values are what the table already shows; or this was tried and failed.
+            if hash == tag.hash || self.links_failed.contains(&(target, tag.source.clone(), tag.range.clone(), hash)) {
+                continue;
+            }
+            // Not under the person's hands: their caret may be in that very table.
+            if self.view == View::Tab(target) {
+                continue;
+            }
+            let new_tag = links::Tag { hash, ..tag.clone() };
+            let result: Result<(), String> = match what {
+                Found::Word { block } => match self.sheet_copy(ctx, source, Some(&tag.sheet), &tag.range) {
+                    Ok((text, Some(html))) => match self.entry_mut(target).map(|e| &mut e.tab) {
+                        Some(Tab::Word(a)) => links::word_refresh(&mut a.session, block, &text, &html, &new_tag),
+                        _ => Err("that tab was closed".into()),
+                    },
+                    Ok((_, None)) => Err("the range is now too big for a table".into()),
+                    Err(e) => Err(e),
+                },
+                Found::Deck(link) => {
+                    let data = links::values_as_strings(read);
+                    let (max_r, max_c) = convert::SLIDE_TABLE_MAX;
+                    if data.len() > max_r || data.iter().any(|r| r.len() > max_c) {
+                        Err(format!("the range is now bigger than {max_r} rows by {max_c} columns, which is as much as a slide's table holds"))
+                    } else {
+                        match self.entry_mut(target).map(|e| &mut e.tab) {
+                            Some(Tab::Deck(a)) => links::deck_refresh(&mut a.session, &link, &data, &new_tag),
+                            _ => Err("that tab was closed".into()),
+                        }
+                    }
+                }
+            };
+            let name = self.entries.iter().find(|e| e.id == target).map(|e| e.name.clone()).unwrap_or_default();
+            match result {
+                Ok(()) => {
+                    self.toast = Some((format!("Updated the linked table {} in {name}.", tag.range), false, now));
+                    ctx.request_repaint();
+                }
+                Err(e) => {
+                    self.links_failed.insert((target, tag.source.clone(), tag.range.clone(), hash));
+                    self.toast = Some((format!("Couldn't update the linked table in {name}: {e}"), true, now));
+                }
+            }
+        }
     }
 
     /// A new slide in deck `id` with `layout` and `title`, then `fill` to put something on it. A
@@ -4591,6 +4822,7 @@ impl eframe::App for Suite {
         for p in std::mem::take(&mut self.pending) {
             self.open_file(ctx, &p);
         }
+        self.refresh_links(ctx);
         #[cfg(target_arch = "wasm32")]
         {
             let dirty = self.entries.iter().any(|e| e.tab.is_dirty());
