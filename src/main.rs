@@ -763,6 +763,23 @@ struct FolderScan {
 }
 type FolderScans = std::sync::Arc<std::sync::Mutex<Vec<FolderScan>>>;
 
+/// A move or a trash that ran on a worker thread: copying a big folder to another drive (a NAS
+/// share) can take minutes, and the window must stay alive meanwhile.
+#[cfg(not(target_arch = "wasm32"))]
+enum JobDone {
+    Moved { src: String, dest_dir: String, res: Result<std::path::PathBuf, String> },
+    Trashed { path: String, open: Vec<u64>, res: Result<files::Trashed, String> },
+}
+
+/// The file jobs in flight (`busy`: the path each works on, with the label shown on Home) and the
+/// answers the workers left.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct FileJobs {
+    done: std::sync::Arc<std::sync::Mutex<Vec<JobDone>>>,
+    busy: Vec<(String, String)>,
+}
+
 /// One file in the Home table.
 #[derive(Clone)]
 struct Row {
@@ -1394,6 +1411,9 @@ struct Suite {
     /// "Delete forever" asked for this OfficeCraft Trash item: waiting for the confirm.
     #[cfg(not(target_arch = "wasm32"))]
     purge_confirm: Option<files::OwnItem>,
+    /// Desktop: moves and trashes running on worker threads.
+    #[cfg(not(target_arch = "wasm32"))]
+    jobs: FileJobs,
     /// Quit and discard was chosen: keep asking the window to close until it does.
     leaving: bool,
     /// Launch: a WordCraft session reading the recovery folder (see `poll_word_recovery`).
@@ -1517,7 +1537,7 @@ impl Suite {
             Some(_) if recent.is_empty() => (Some(0), Vec::new()),
             _ => (None, Vec::new()),
         };
-        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, listing_seq: std::collections::HashMap::new(), listing_state: Listing::Ready, file_op_focused: false, #[cfg(not(target_arch = "wasm32"))] purge_confirm: None, leaving: false, #[cfg(not(target_arch = "wasm32"))] word_probe: None, tab_in_view: None, tabs_overflow: false, status: None, toast: None, links_polled: 0.0, links_failed: std::collections::HashSet::new(), make_prompt: String::new(), make_kind: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
+        let suite = Suite { view: View::Home, entries: Vec::new(), next_id: 1, recent, pending: Vec::new(), notice: None, confirm_close: None, confirm_quit: None, quit_ok: false, cwd: None, file_op: None, show_trash: false, listing_seq: std::collections::HashMap::new(), listing_state: Listing::Ready, file_op_focused: false, #[cfg(not(target_arch = "wasm32"))] purge_confirm: None, #[cfg(not(target_arch = "wasm32"))] jobs: FileJobs::default(), leaving: false, #[cfg(not(target_arch = "wasm32"))] word_probe: None, tab_in_view: None, tabs_overflow: false, status: None, toast: None, links_polled: 0.0, links_failed: std::collections::HashSet::new(), make_prompt: String::new(), make_kind: None, focused: true, recent_rows: (Vec::new(), Vec::new()), #[cfg(not(target_arch = "wasm32"))] own_trash: files::own_trash_list(), ai_cfg: ai::Config::load(), ai_settings: None, #[cfg(not(target_arch = "wasm32"))] updater: updater::Updater::new(), ctx_owner: None, selftest: None, ai_selftest: None, persist: true, last_session: Vec::new(), restore_home: false, filter: Filter::All, search: String::new(), folders, folder_sel, folder_rows, home_grid: load_home_grid(), shot: None, shot_sent: false, home_styled: false, folder_counts: Vec::new(), folder_scans: FolderScans::default(), scans: std::collections::HashMap::new(), inbox: Inbox::default(), looks: std::collections::HashMap::new(), owner_frames: 0, settle: 0, restyle: None, tiles: Vec::new(), tile_layout: Vec::new(), tile_rects: Vec::new(), tile_max_cols: 2, tab_drag: None, tile_test_out: None, tile_pref: TilePref::load(), tile_prompt: false, tile_remember: false, fonts_union: None, tile_settle: 0, tile_running: Vec::new(), tile_warm: std::collections::HashMap::new(), tile_styles: std::collections::HashMap::new(), tile_restores: Vec::new(), tile_frame: 0, tiles_test: None };
         suite
     }
 
@@ -2756,21 +2776,19 @@ impl Suite {
             }
         }
         for (src, dest) in acts.moves {
+            if self.jobs.busy.iter().any(|(p, _)| *p == src) {
+                continue;
+            }
             if let Some(blocked) = self.cannot_follow(&src) {
                 self.notice = Some(format!("Close {blocked} first: it can't follow a move."));
                 continue;
             }
-            match files::move_into(std::path::Path::new(&src), std::path::Path::new(&dest)) {
-                Ok(new) if new.to_string_lossy() == src => {}
-                Ok(new) => {
-                    let new = new.to_string_lossy().to_string();
-                    self.retarget(&src, &new);
-                    self.notice = None;
-                    self.status = Some(format!("Moved {} to {}", file_name_of(&src), file_name_of(&dest)));
-                }
-                Err(e) => self.notice = Some(e),
-            }
-            self.refresh_home(ctx);
+            let label = format!("Moving {} to {}…", file_name_of(&src), file_name_of(&dest));
+            let (from, into) = (src.clone(), dest.clone());
+            self.spawn_job(ctx, &src, label, move || {
+                let res = files::move_into(std::path::Path::new(&from), std::path::Path::new(&into));
+                JobDone::Moved { src: from, dest_dir: into, res }
+            });
         }
         if let Some(p) = acts.reveal {
             reveal_in_file_manager(&p);
@@ -2848,11 +2866,75 @@ impl Suite {
         }
     }
 
-    /// Moves `path` to the trash, after closing the tabs that have it open.
+    /// The job Home shows as running (path, label), if any.
+    fn jobs_label(&self) -> Option<&(String, String)> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.jobs.busy.last();
+        #[cfg(target_arch = "wasm32")]
+        None
+    }
+
+    /// Starts a job on a worker thread; `take_jobs` applies its answer. While it runs, Home shows
+    /// `label` and the window won't close.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn spawn_job(&mut self, ctx: &egui::Context, path: &str, label: String, work: impl FnOnce() -> JobDone + Send + 'static) {
+        self.notice = None;
+        self.jobs.busy.push((path.to_string(), label));
+        let done = self.jobs.done.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = work();
+            done.lock().unwrap_or_else(|e| e.into_inner()).push(result);
+            ctx.request_repaint();
+        });
+    }
+
+    /// Takes in what the file-job workers finished.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn take_jobs(&mut self, ctx: &egui::Context) {
+        let done = std::mem::take(&mut *self.jobs.done.lock().unwrap_or_else(|e| e.into_inner()));
+        for job in done {
+            match job {
+                JobDone::Moved { src, dest_dir, res } => {
+                    self.jobs.busy.retain(|(p, _)| *p != src);
+                    match res {
+                        Ok(new) if new.to_string_lossy() == src => {}
+                        Ok(new) => {
+                            let new = new.to_string_lossy().to_string();
+                            self.retarget(&src, &new);
+                            self.notice = None;
+                            self.status = Some(format!("Moved {} to {}", file_name_of(&src), file_name_of(&dest_dir)));
+                        }
+                        Err(e) => self.notice = Some(e),
+                    }
+                    self.refresh_home(ctx);
+                }
+                JobDone::Trashed { path, open, res } => {
+                    self.jobs.busy.retain(|(p, _)| *p != path);
+                    self.finish_trash(ctx, &path, open, res);
+                }
+            }
+        }
+    }
+
+    /// Moves `path` to the trash on a worker thread; its tabs close once it is safely there.
     #[cfg(not(target_arch = "wasm32"))]
     fn do_trash(&mut self, ctx: &egui::Context, path: &str) {
+        if self.jobs.busy.iter().any(|(p, _)| p == path) {
+            return;
+        }
         let open = self.tabs_under(path);
-        match files::trash(std::path::Path::new(path)) {
+        let label = format!("Moving {} to the Trash…", file_name_of(path));
+        let p = path.to_string();
+        self.spawn_job(ctx, path, label, move || {
+            let res = files::trash(std::path::Path::new(&p));
+            JobDone::Trashed { path: p, open, res }
+        });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn finish_trash(&mut self, ctx: &egui::Context, path: &str, open: Vec<u64>, res: Result<files::Trashed, String>) {
+        match res {
             Ok(place) => {
                 // Only now that the file is safely in a trash: its tabs close (unsaved changes
                 // were confirmed away in the dialog).
@@ -4219,6 +4301,12 @@ impl Suite {
             if let Some(n) = &self.notice {
                 ui.add_space(6.0);
                 ui.colored_label(egui::Color32::from_rgb(190, 40, 50), n);
+            } else if let Some((_, label)) = self.jobs_label() {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.colored_label(ACCENT, label);
+                });
             } else if let Some(st) = &self.status {
                 ui.add_space(6.0);
                 ui.colored_label(ACCENT, st);
@@ -4892,6 +4980,7 @@ impl eframe::App for Suite {
             }
             self.focused = focused;
             self.take_listings();
+            self.take_jobs(ctx);
             self.poll_word_recovery();
         }
         if self.restore_home && self.pending.is_empty() {
@@ -5004,6 +5093,16 @@ impl eframe::App for Suite {
         // The window is asked to close while a tab holds unsaved work: the shell asks once, for
         // every tab. The request is taken out of the input, so no app shows its own "Save
         // changes?" on top (DeckCraft and PdfCraft would) and eframe keeps the window open.
+        // A move or trash still copying: closing now would leave half a copy behind.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some((_, label)) = self.jobs.busy.last().cloned()
+            && let Some(info) = raw.viewports.get_mut(&egui::ViewportId::ROOT)
+            && info.events.contains(&egui::ViewportEvent::Close)
+        {
+            info.events.retain(|e| *e != egui::ViewportEvent::Close);
+            self.notice = Some(format!("Still busy: {} Close the window again when it's done.", label));
+            ctx.request_repaint();
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if !self.quit_ok
             && let Some(info) = raw.viewports.get_mut(&egui::ViewportId::ROOT)
@@ -5210,7 +5309,7 @@ impl eframe::App for Suite {
                     let tiled = self.tiles.len() >= 2;
                     let hint = if tiled { "Back to one document at a time" } else { "Show open documents side by side" };
                     let can = tiled || self.entries.iter().filter(|e| e.kind.tileable()).count() >= 2;
-                    if ui.add_enabled_ui(can, |ui| ui.selectable_label(tiled, "▥ Tile").on_hover_text(hint).clicked()).inner {
+                    if ui.add_enabled_ui(can, |ui| ui.selectable_label(tiled, "Tile").on_hover_text(hint).clicked()).inner {
                         toggle_tile = true;
                     }
                 });
@@ -5685,5 +5784,49 @@ mod tab_order_tests {
         assert_eq!(drop(3, 50.0), [1, 3, 2, 4]);
         assert_eq!(drop(2, 60.0), [1, 2, 3, 4]);
         assert!(tab_insert_index(&rects()[..1], 1, 10.0).is_none());
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod file_job_tests {
+    use super::*;
+
+    /// A move runs on a worker: starting it returns at once with the file still where it was, and
+    /// `take_jobs` applies the answer when it lands (open tabs follow, Home says what happened).
+    #[test]
+    fn a_move_runs_in_the_background() {
+        let tmp = std::env::temp_dir().join(format!("oc-jobs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("into")).unwrap();
+        std::fs::create_dir_all(tmp.join("cfg")).unwrap();
+        // Keep the shell's own settings (recent files, folders) out of the user's real ones.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", tmp.join("cfg"));
+            std::env::set_var("XDG_DATA_HOME", tmp.join("cfg"));
+        }
+        let file = tmp.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let ctx = egui::Context::default();
+        let mut suite = Suite::new();
+        let (src, into) = (file.to_string_lossy().to_string(), tmp.join("into").to_string_lossy().to_string());
+        let (from, dest) = (src.clone(), into.clone());
+        suite.spawn_job(&ctx, &src, "Moving a.txt…".into(), move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let res = files::move_into(std::path::Path::new(&from), std::path::Path::new(&dest));
+            JobDone::Moved { src: from, dest_dir: dest, res }
+        });
+        assert!(file.exists() && !tmp.join("into/a.txt").exists(), "the move had not started yet");
+        assert_eq!(suite.jobs_label().map(|(_, l)| l.as_str()), Some("Moving a.txt…"));
+        for _ in 0..100 {
+            suite.take_jobs(&ctx);
+            if suite.jobs.busy.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(suite.jobs.busy.is_empty(), "the job never finished");
+        assert!(!file.exists() && tmp.join("into/a.txt").exists(), "the file moved");
+        assert_eq!(suite.status.as_deref(), Some("Moved a.txt to into"));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
